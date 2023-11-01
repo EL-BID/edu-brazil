@@ -162,3 +162,6 @@ cython_debug/
 secret.py
 cache/
 ign*
+
+# Ignore office temp files
+~$*.xlsx
