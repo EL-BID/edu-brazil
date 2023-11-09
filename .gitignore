@@ -165,3 +165,4 @@ ign*
 
 # Ignore office temp files
 ~$*.xlsx
+outputs/
