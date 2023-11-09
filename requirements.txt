@@ -1,0 +1,4 @@
+urbanpy==0.2.2-dev0
+geobr
+contextily
+matplotlib-scalebar
