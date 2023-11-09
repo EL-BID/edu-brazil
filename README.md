@@ -14,5 +14,5 @@ The goal of this project is to estimate the education infraestructure gap and re
 
 - Exploratory Data Analysis
   - [Pará](https://el-bid.github.io/edu-brazil/para_data_extraction.html)
-  - [Florianópolis][https://el-bid.github.io/edu-brazil/flor_data_extraction.html)
+  - [Florianópolis](https://el-bid.github.io/edu-brazil/flor_data_extraction.html)
 
