@@ -63,31 +63,52 @@ On the other hand, School Accessibility is represented by seven variables at the
 
 These variables are designed to represent the areas in the city where there is a low accessibility to school and to verify which population demographics are most affected considering age and income. For example: “30% of the population between 3 to 5 years is located in areas that don’t have schools in a radius of 1km and the travel time duration to the nearest school is 1 hour or more.”
 
-## Location Analysis
+## School Location Analysis Tool
 
-### Proposal 1: Hotspot Analysis
 
-Using the hotspot analysis technique, we could identify areas where School Capacity and Accessibility have statistically low or high values. This allows decision makers to focus on the coldspots (low-low) to promote the location of new schools. Another case is identifying areas with high Capacity and low Accessibility on which better accessibility could mean more students are able to commute to school and receive education.
+Using the hotspot analysis technique, we could identify areas where School Capacity and Accessibility have statistically low or high values. This allows decision makers to focus on the coldspots (low-low) to promote the location of new schools. Another case is identifying areas with high Capacity and low Accessibility on which improving the current accessibility could mean more that students will be able to attend the schools and receive education.
 
-![Hotspot Analysis](docs/images/flor_hotspots.png)
+This section outlines the functionality and workflow of a School Location Tool designed to facilitate strategic decision-making in educational planning. The tool employs a user-friendly interface to guide users through the process, resulting in valuable insights for optimizing school placements within specified regions.
 
-### Proposal 2: Facility Location Optimization
+## 1. Welcome and Project Goals
 
-The Facility Location Problem is an optimization problem that, subject to user-defined constraints, selects the optimal locations for a certain facility from a given set of candidate locations. Traditionally the model uses four main variables as inputs:
+1.1 Upon accessing the tool, a modal card greets the user with a welcome message and an explanation of the project goals.
 
-Customer demand
-Customer cost (usually expressed in travel distance or duration)
-Facilities to be selected
-Facilities capacity (Optional)
-Number of facilities to select
+1.2 The user initiates the process by clicking the "Get Started" button.
 
-In our case we can obtain variables that better represent the use case. For instance:
+1.3 Following this action, the modal card closes, and the user is directed to the main dashboard.
 
-Population by group ages
-School accessibility metric
-Existing Schools and Hexagons with no schools
-School capacity
+## 2. Defining the Area of Interest (AoI)
 
-Finally, the FLP model will select an user-defined number of hexagons that represents the optimal geographical areas to locate a new school.
+2.1 The dashboard displays a map featuring the microregions of Pará.
+
+2.2 Users can define their Area of Interest (AoI) by clicking on a specific microregion.
+
+2.3 Upon selection, the map automatically centers on the chosen microregion.
+
+2.4 Hexagons and Schools data pertinent to the selected microregion are visually presented.
+
+## 3. Spatial Composite Index Creation (Work in Progress)
+
+3.1 Users have the option to delve into the variables related to Accessibility and Capacity.
+
+3.2 Selection and weighting of variables for the SCI (Spatial Composite Index) Accessibility and SCI Capacity are user-controlled.
+
+3.3 Upon finalizing variable selection, a background process calculates the Schools Capacity and Accessibility Indexes for the chosen microregion.
+
+## 4. Hotspot Analysis and Results (Work in Progress)
+
+4.1 An automated process generates a Hotspot Analysis based on the Schools Capacity and Accessibility Indexes for the selected microregion.
+
+4.2 The map is dynamically updated to reflect the results of the Hotspot Analysis.
+
+4.3 Users are empowered to download comprehensive results in a zip file, including:
+   - A CSV file containing the Hexagon dataset with all variables and indexes within the selected microregion.
+   - A CSV file containing the Schools dataset within the selected microregion.
+   - A Pandas profile report offering in-depth insights into the Hexagon dataset.
+
+
+The School Location Tool provides a systematic and efficient approach to aid educational planners in making informed decisions for optimal school placement within specified regions.
+
 
 
