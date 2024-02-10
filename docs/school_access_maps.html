@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <!-- Make a small title -->
+    <title>Pará's School Access</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+</head>
+
+<body>
+    <div class="container">
+        <h3>Population Density and School Travel Time for Microregions in Pará</h3>
+
+        <label for="microregion">Select a Microregion to load the map:</label>
+        <select id="microregion" onchange="loadFile()">
+            <option value="">Select...</option>
+            <option value="almeirim.html">Almeirim</option>
+            <option value="altamira.html">Altamira</option>
+            <option value="arari.html">Arari</option>
+            <option value="belem.html">Belém</option>
+            <option value="bragantina.html">Bragantina</option>
+            <option value="cameta.html">Cametá</option>
+            <option value="castanhal.html">Castanhal</option>
+            <option value="conceicao do araguaia.html">Conceição do Araguaia</option>
+            <option value="furos de breves.html">Furos de Breves</option>
+            <option value="guama.html">Guamá</option>
+            <option value="itaituba.html">Itaituba</option>
+            <option value="maraba.html">Marabá</option>
+            <option value="obidos.html">Óbidos</option>
+            <option value="paragominas.html">Paragominas</option>
+            <option value="parauapebas.html">Parauapebas</option>
+            <option value="portel.html">Portel</option>
+            <option value="redencao.html">Redenção</option>
+            <option value="salgado.html">Salgado</option>
+            <option value="santarem.html">Santarém</option>
+            <option value="sao felix do xingu.html">São Félix do Xingu</option>
+            <option value="tome-acu.html">Tomé-Açu</option>
+            <option value="tucurui.html">Tucuruí</option>
+        </select>
+
+    </div>
+
+
+    <iframe id="fileFrame" src="" width="100%" height="100%"></iframe>
+
+    <style>
+        /* Make iframe fill the rest of the page height */
+        html,
+        body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+
+        iframe {
+            height: 80%;
+            width: 100%;
+            border: none;
+        }
+    </style>
+
+    <script>
+        function loadFile() {
+            var select = document.getElementById("microregion");
+            var filePath = select.value;
+            var fileFrame = document.getElementById("fileFrame");
+            var root = "https://claudio9701.github.io/edu-brazil/outputs/para_microregions_maps/";
+            fileFrame.src = root + filePath;
+        }
+    </script>
+</body>
+
+</html>
