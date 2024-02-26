@@ -1,0 +1,79 @@
+/* Disable scrollbars for the entire app */
+
+
+#content {
+    height: 90vh;
+}
+
+/* Modify sidebar class */
+/* .sidebar {
+    overflow-y: scroll;
+    overflow-x: scroll;
+} */
+
+#layers_selector .checklistLabel {
+    display: block;
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position-x: right;
+}
+
+#layers_selector label:nth-child(1) {
+    background-image: url(https://img.icons8.com/office/40/000000/layers.png);
+}
+
+#layers_selector label:nth-child(2) {
+    background-image: url(https://img.icons8.com/office/40/000000/shopping-basket.png);
+}
+
+#layers_selector label:nth-child(3) {
+    background-image: url(https://img.icons8.com/office/40/000000/clinic.png);
+}
+
+#layers_selector label:nth-child(4) {
+    background-image: url(https://img.icons8.com/office/40/000000/forest.png);
+}
+
+#layers_selector .checklistLabel input {
+    margin: 3px 3px 3px 3px;
+}
+
+.top-right {
+    bottom: 0;
+    right: 0;
+}
+
+.options-panel {
+    position: absolute;
+    background: rgba(255, 255, 255, .75);
+    box-shadow: 0 0 4px rgba(0, 0, 0, .15);
+    margin: 24px;
+    padding: 12px 24px;
+    max-height: 96%;
+    overflow-x: hidden;
+    overflow-y: overlay;
+    outline: none;
+    z-index: 2;
+}
+
+.options-panel .legend {
+    height: 12px;
+    display: inline-block;
+}
+
+@media (min-width: 576px) {
+    #sidebar {
+        height: 100vh;
+        position: relative;
+        overflow-y: scroll;
+    }
+
+    #content {
+        height: 100vh;
+    }
+
+    .top-right {
+        bottom: auto;
+        right: 0;
+    }
+}
