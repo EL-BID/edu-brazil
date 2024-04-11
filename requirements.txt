@@ -1,4 +1,4 @@
-urbanpy==0.2.2-dev0
+urbanpy==0.2.2-dev1
 geobr
 contextily
 matplotlib-scalebar
