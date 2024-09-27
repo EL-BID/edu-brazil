@@ -1,30 +1,65 @@
+# Import libraries
+import os
+import io
+import base64
 import time
-import geopandas as gpd
 import pandas as pd
+import numpy as np
+import geopandas as gpd
 import pydeck as pdk
-import dash_bootstrap_components as dbc
-import dash_mantine_components as dmc
-import dash_deck
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
-from dash import Dash, html, dcc, Output, Input, State, ctx, ALL
+import dash_bootstrap_components as dbc
+import dash_mantine_components as dmc
+import dash_deck
+import plotly.graph_objs as go
+from pandas.api.types import is_numeric_dtype
 from matplotlib import colormaps as mcm
-from options import *
-from helper_colormaps import cmaps_options
+from shapely.geometry import box
+from dash import Dash, html, dcc, Output, Input, State, ctx, ALL
 
+# Custom modules
+import hotspot_analysis as ha
+from helper_colormaps import cmaps_options
+from options import (
+    capacity_var_labels,
+    access_var_labels,
+    column_labels,
+    color_variable_options,
+    height_variable_options,
+)
+
+# Set the backend for matplotlib (no need to display plots)
+mpl.use("agg")
+
+# Register the custom colormaps
 CLUSTER_COLORS = mcolors.ListedColormap(
-    ["yellowgreen", "gold", "orange", "red", "lightgray"],
+    # ["N", "LL", "LH", "HL", "HH"],
+    ["lightgray", "red", "orange", "gold", "yellowgreen"],
     name="clusters_cmap",
 )
-mpl.colormaps.register(CLUSTER_COLORS)
+mcm.register(CLUSTER_COLORS)
 
 
-# Create the colorbar legend
-def create_continuous_colorbar(
-    cmap,
-    series: pd.Series,
-):
+def generate_colorbar_legend(cmap: mcolors.Colormap, series: pd.Series):
+    """
+    Create a continuous colorbar for a given series using a matplotlib colormap.
+    The colorbar is saved as an image and encoded as a base64 string to be used in the html img.src attribute.
+
+    Parameters
+    ----------
+    cmap : matplotlib.colors.Colormap
+        The colormap to use for the colorbar.
+    series : pd.Series
+        The series to use for the colorbar.
+
+    Returns
+    -------
+    fig_bar_src : str
+        The base64 encoded image of the colorbar.
+
+    """
     # Create figure
     fig, ax = plt.subplots(figsize=(6, 1), layout="constrained")
     norm = mcolors.Normalize(vmin=series.min(), vmax=series.max())
@@ -32,6 +67,7 @@ def create_continuous_colorbar(
         mpl.cm.ScalarMappable(norm=norm, cmap=cmap),
         cax=ax,
         orientation="horizontal",
+        ticks=np.linspace(series.min(), series.max(), 5),
     )
     cbar.ax.tick_params(labelsize=20, labelfontfamily="sans-serif")
     # Convert figure to image and encode it for html img.src attribute
@@ -41,7 +77,79 @@ def create_continuous_colorbar(
     fig_bar_src = f"data:image/png;base64,{fig_data}"
     img_buf.close()
 
-    return fig_bar_src
+    legend = html.Img(src=fig_bar_src, style={"width": "100%", "height": "5vh"})
+
+    return legend
+
+
+def generate_legend(rgb_values, categories):
+    legend_items = []
+
+    for rgb, category in zip(rgb_values, categories):
+        color_hex = f"rgb({rgb[0]}, {rgb[1]}, {rgb[2]})"
+        legend_item = dbc.Row(
+            [
+                dbc.Col(
+                    html.Div(
+                        style={
+                            "background-color": color_hex,
+                            "width": "20px",
+                            "height": "20px",
+                            # "border-radius": "50%",
+                        }
+                    ),
+                    width=1,
+                ),
+                dbc.Col(html.P(category, style={"margin-left": "10px"})),
+            ],
+            style={"margin-bottom": "5px"},
+        )
+        legend_items.append(legend_item)
+
+    legend = dbc.ListGroup(legend_items)
+
+    return legend
+
+
+def create_categorical_legend(cmap: mcolors.Colormap, categories: list):
+    """
+    Create a categorical legend for a given list of categories using a matplotlib colormap.
+    The legend is saved as an image and encoded as a base64 string to be used in the html img.src attribute.
+
+    Parameters
+    ----------
+    cmap : matplotlib.colors.Colormap
+        The colormap to use for the legend.
+    categories : list
+        The list of categories to use for the legend.
+
+    Returns
+    -------
+    fig_legend_src : str
+        The base64 encoded image of the legend.
+
+    """
+    # Create figure
+    fig, ax = plt.subplots(figsize=(1, 3), layout="constrained")
+    norm = mcolors.BoundaryNorm(np.arange(len(categories) + 1), cmap.N)
+    cbar = fig.colorbar(
+        mpl.cm.ScalarMappable(norm=norm, cmap=cmap),
+        cax=ax,
+        orientation="vertical",
+        boundaries=np.arange(len(categories) + 1) - 0.5,
+        ticks=np.arange(len(categories)) + 0.5,
+    )
+    cbar.ax.set_yticklabels(categories, fontsize=5, fontfamily="sans-serif")
+    # Remove ticks line
+
+    # Convert figure to image and encode it for html img.src attribute
+    img_buf = io.BytesIO()
+    plt.savefig(img_buf, format="png", dpi=100, bbox_inches="tight")
+    fig_data = base64.b64encode(img_buf.getbuffer()).decode("ascii")
+    fig_legend_src = f"data:image/png;base64,{fig_data}"
+    img_buf.close()
+
+    return fig_legend_src
 
 
 ### DASHBOARD USER JOURNEY
@@ -51,7 +159,7 @@ app = Dash(
     external_stylesheets=[dbc.themes.BOOTSTRAP],
 )
 
-mapbox_api_token = "pk.eyJ1IjoiY2xhdWRpbzk3IiwiYSI6ImNqbzM2NmFtMjB0YnUzd3BvenZzN3QzN3YifQ.heZHwQTY8TWhuO0u2-BxxA"
+mapbox_api_token = os.getenv("MAPBOX_API_TOKEN")
 
 # Read hexagons and school data with geopandas
 start_time = time.time()
@@ -172,7 +280,6 @@ capacity_var_selector = dbc.AccordionItem(
 
 access_var_selector = dbc.AccordionItem(
     title="3. Select Accessibility Variables",
-    style={"overflow": "scroll"},
     children=[
         html.Div(
             [
@@ -243,44 +350,28 @@ download_results = dbc.AccordionItem(
     children=[],
 )
 
-sidebar = dbc.Col(
-    html.Div(
-        [
-            dbc.Card(
-                [
-                    dbc.CardHeader("Schools Gap Analysis Tool"),
-                    dbc.CardBody(
-                        [
-                            dbc.Accordion(
-                                [
-                                    region_selector,
-                                    capacity_var_selector,
-                                    access_var_selector,
-                                    hotspot_analysis,
-                                    download_results,
-                                ],
-                                style={"overflow": "scroll"},
-                            )
-                        ]
-                    ),
-                ],
-                className="mt-3",
-            ),
-        ],
-    ),
-    width=3,
-    className="sidebar mt-3",
-    style={
-        "position": "fixed",
-        "top": 0,
-        "left": 0,
-        "bottom": 0,
-        "width": "16rem",
-        "padding": "2rem 1rem",
-        "background-color": "#f8f9fa",
-        "overflow-x": "hidden",
-        "overflow-y": "scroll",
-    },
+sidebar = html.Div(
+    [
+        dbc.Card(
+            [
+                dbc.CardHeader("Schools Gap Analysis Tool"),
+                dbc.CardBody(
+                    [
+                        dbc.Accordion(
+                            [
+                                region_selector,
+                                capacity_var_selector,
+                                access_var_selector,
+                                hotspot_analysis,
+                                download_results,
+                            ]
+                        )
+                    ]
+                ),
+            ],
+            className="mt-3",
+        ),
+    ],
 )
 
 ## Main map
@@ -315,7 +406,7 @@ color_variable_picker = dbc.Card(
                 ],
             ),
             html.Br(),
-            html.Img(id="colorscale-legend", style={"width": "100%", "height": "5vh"}),
+            html.Div(id="legend"),
         ],
     ),
 )
@@ -400,29 +491,20 @@ r = pdk.Deck(
     map_style=pdk.map_styles.SATELLITE,
 )
 
-initial_map = dash_deck.DeckGL(
-    r.to_json(),
-    id="deck-gl",
-    enableEvents=["click"],  # , 'hover', 'dragStart', 'dragEnd'] # True
-    tooltip={"text": "{name_micro}, {name_state}"},
-    mapboxKey=mapbox_api_token,
-    style={
-        "width": "100%",
-        "height": "100vh",
-        "position": "relative",
-    },
-)
-
-main_map = dbc.Col(
-    html.Div(id="map", children=initial_map),
-    width=9,
-    className="p-0",
-    style={
-        "margin-left": "18rem",
-        "margin-right": "2rem",
-        "padding": "2rem 1rem",
-        "display": "inline-block",
-    },
+initial_map = html.Div(
+    id="map",
+    children=dash_deck.DeckGL(
+        r.to_json(),
+        id="deck-gl",
+        enableEvents=["click"],  # , 'hover', 'dragStart', 'dragEnd'] # True
+        tooltip={"text": "{name_micro}, {name_state}"},
+        mapboxKey=mapbox_api_token,
+        style={
+            "width": "100%",
+            "height": "100vh",
+            "position": "relative",
+        },
+    ),
 )
 
 # Layout
@@ -431,8 +513,20 @@ app.layout = dbc.Container(
         welcome_modal,
         dbc.Row(
             [
-                sidebar,
-                main_map,
+                dbc.Col(
+                    sidebar,
+                    # Vertically stacked for mobile, sidebar for desktop
+                    width=12,
+                    sm=3,
+                    # Allow verticall scrolling if the content is too long
+                    className="vh-100 overflow-auto",
+                ),
+                dbc.Col(
+                    initial_map,
+                    width=12,
+                    sm=9,
+                    className="p-0 overflow-hidden",
+                ),
             ]
         ),
     ],
@@ -449,15 +543,6 @@ app.layout = dbc.Container(
 )
 def modal_switch(nc1, opened):
     return not opened
-
-
-import pandas as pd
-import numpy as np
-import matplotlib
-import io
-import base64
-
-matplotlib.use("agg")
 
 
 @app.callback(
@@ -482,9 +567,9 @@ def select_microregion(click):
         rgba_list = cmap(hexagons_clipped["pop_6_14_years_adj"])
         hexagons_clipped["color"] = [[int(c * 255) for c in rgba] for rgba in rgba_list]
 
-        color_variable_picker.children.children[3].src = create_continuous_colorbar(
-            cmap, hexagons_clipped["pop_6_14_years_adj"]
-        )
+        color_variable_picker.children.children[-1].children = [
+            generate_colorbar_legend(cmap, hexagons_clipped["pop_6_14_years_adj"])
+        ]
 
         schools_clipped = data["schools"].clip(selected_microregion)
 
@@ -562,7 +647,7 @@ def select_microregion(click):
 
 @app.callback(
     Output("deck-gl", "data"),
-    Output("colorscale-legend", "src", allow_duplicate=True),
+    Output("legend", "children"),
     Input("color-variable-dropdown", "value"),
     Input("color-palette-dropdown", "value"),
     Input("height-variable-dropdown", "value"),
@@ -583,33 +668,86 @@ def update_hex_layer_color(
         print("Hexagons clipped columns", hexagons_clipped.columns)
 
         print("Creating colorscale ...")
-        cmap = mcm.get_cmap(color_palette)
-        rgba_list = cmap(hexagons_clipped[color_variable])
-        print("RGBA list", rgba_list)
-        hexagons_clipped["color"] = [[int(c * 255) for c in rgba] for rgba in rgba_list]
-        print("Color column created")
 
-        print("Plotting ...")
-        fig, ax = plt.subplots(figsize=(6, 1), layout="constrained")
-        norm = mcolors.Normalize(
-            vmin=hexagons_clipped[color_variable].min(),
-            vmax=hexagons_clipped[color_variable].max(),
-        )
-        fig.colorbar(
-            mpl.cm.ScalarMappable(norm=norm, cmap=cmap),
-            cax=ax,
-            orientation="horizontal",
-            label=column_labels[color_variable],
-        )
-        # Create an image from the plot
-        img_buf = io.BytesIO()
-        plt.savefig(img_buf, format="png", dpi=150, bbox_inches="tight")
-        # Embed the result in the html output.
-        fig_data = base64.b64encode(img_buf.getbuffer()).decode("ascii")
-        fig_bar_src = f"data:image/png;base64,{fig_data}"
-        img_buf.close()
+        # Check if the color variable is numerical:
+        if is_numeric_dtype(hexagons_clipped[color_variable]):
+            cmap = mcm.get_cmap(color_palette)
+            rgba_list = cmap(hexagons_clipped[color_variable])
+            print("RGBA list", rgba_list)
+            hexagons_clipped["color"] = [
+                [int(c * 255) for c in rgba] for rgba in rgba_list
+            ]
+            print("Color column created.")
+            legend = generate_colorbar_legend(cmap, hexagons_clipped[color_variable])
+            print("Colorscale created.")
+        else:
+            # Create a discrete colormap
+            # if color_palette is not qualitative, use the default qualitative palette (Dark2)
+            if (
+                ("duration_to_school_min" not in color_variable)
+                and (color_palette not in cmaps_options[-2][1])
+                and ("clusters" not in color_variable)
+            ):
+                color_palette = "Dark2"
 
-        print("Colorscale created")
+            if color_palette == "clusters_cmap":
+                cmap = mcm.get_cmap(color_palette)
+                print("Categorical colormap", cmap.colors)
+                color_mapping = {
+                    # Value: RGB colors in a list
+                    "HH": [154, 205, 50],  # yellowgreen
+                    "HL": [255, 215, 0],  # gold
+                    "LH": [255, 165, 0],  # orange
+                    "LL": [255, 69, 0],  # red
+                    "N": [211, 211, 211],  # lightgray
+                }
+                hexagons_clipped["color"] = hexagons_clipped[color_variable].map(
+                    color_mapping
+                )
+                legend = generate_legend(
+                    list(color_mapping.values()),
+                    [
+                        "High Capacity + High Access",
+                        "High Capacity + Low Access",
+                        "Low Capacity + High Access",
+                        "Low Capacity + Low Access",
+                        "Not Significant",
+                    ],
+                )
+            else:
+
+                N = len(hexagons_clipped[color_variable].unique())
+                cmap = mcm.get_cmap(color_palette).resampled(N)
+                categories = hexagons_clipped[color_variable].unique()
+                # Check if there are nan values:
+                if hexagons_clipped[color_variable].isna().sum() > 0:
+                    cmap = mcm.get_cmap(color_palette).resampled(N - 1)
+                    categories = hexagons_clipped[color_variable].dropna().unique()
+
+                    # Add a color for the nan values
+                    cmap = mcolors.ListedColormap(
+                        list(cmap.colors) + ["lightgray"],
+                    )
+                    categories = np.append(categories, np.nan)
+
+                rgba_list = cmap(range(N))
+                rgba_list = [[int(c * 255) for c in rgba] for rgba in rgba_list]
+
+                print("RGBA list", rgba_list)
+                rgba_mapping = dict(zip(categories, rgba_list))
+                print("RGBA mapping", rgba_mapping)
+                hexagons_clipped["color"] = (
+                    hexagons_clipped[color_variable].astype(object).map(rgba_mapping)
+                )
+                print('hexagons_clipped["color"]', hexagons_clipped["color"].head())
+
+                if hexagons_clipped[color_variable].isna().sum() > 0:
+                    # Create categorical legend with labels (nan = Missing)
+                    categories = hexagons_clipped[color_variable].dropna().unique()
+                    categories = categories.sort_values()
+                    categories = np.append(categories, "Missing")
+
+                legend = generate_legend(rgba_list, categories)
 
         schools_clipped = data["schools"].clip(selected_microregion)
 
@@ -618,6 +756,9 @@ def update_hex_layer_color(
             list(zip(schools_clipped.geometry.x, schools_clipped.geometry.y)),
             view_proportion=0.9,
         )
+        # Change pitch and bearing to get a better view
+        view_state.pitch = 45
+        view_state.bearing = 0
 
         # Create the map with pydeck and dash_deck
         adm_layer = pdk.Layer(
@@ -663,11 +804,7 @@ def update_hex_layer_color(
         )
 
         # Return the updated layers
-        return r.to_json(), fig_bar_src
-
-
-import hotspot_analysis as ha
-from shapely.geometry import box
+        return r.to_json(), legend
 
 
 def calculate_index(hexs, var_labels, switches, sliders):
@@ -742,7 +879,7 @@ def calculate_index_callback(
                 capacity_sliders,
             )
 
-            # Create empty columns for the capacity index and the two scoresç
+            # Create empty columns for the capacity index and the two scores
             hexs = hexs.assign(
                 capacity_index=np.nan, capacity_gi=np.nan, capacity_psim=np.nan
             )
@@ -895,4 +1032,4 @@ def calculate_index_callback(
 
 
 if __name__ == "__main__":
-    app.run_server(debug=True)
+    app.run(debug=True, port=8888, dev_tools_hot_reload=True)
