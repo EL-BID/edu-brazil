@@ -166,3 +166,5 @@ ign*
 # Ignore office temp files
 ~$*.xlsx
 outputs/
+
+.DS_Store
