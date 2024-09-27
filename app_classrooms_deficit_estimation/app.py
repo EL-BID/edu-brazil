@@ -216,6 +216,8 @@ tooltips = [
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 
+server = app.server
+
 # Layout
 app.layout = dbc.Container(
     [
@@ -1056,4 +1058,4 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
     return report_components
 
 if __name__ == "__main__":
-    app.run_server(debug=True)
+    app.run(debug=True)

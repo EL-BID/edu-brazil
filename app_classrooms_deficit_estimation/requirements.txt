@@ -1,0 +1,11 @@
+dash==2.14.2
+dash_bootstrap_components==1.5.0
+geopandas==0.14.2
+h3==3.7.7
+numpy==2.1.1
+pandas==2.2.3
+plotly==5.18.0
+Requests==2.32.3
+Shapely==2.0.6
+urbanpy==0.2.1
+gunicorn
