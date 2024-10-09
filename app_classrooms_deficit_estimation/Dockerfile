@@ -2,7 +2,7 @@ FROM python:3.11.10-slim-bullseye
 
 RUN apt-get update \
     # dependencies for building Python packages
-    && apt-get install -y build-essential \
+    && apt-get install -y build-essential curl \
     # cleaning up unused files
     && apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false \
     && rm -rf /var/lib/apt/lists/*
