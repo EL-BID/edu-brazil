@@ -12,17 +12,12 @@ import urbanpy as up
 import h3
 from shapely.geometry import Polygon
 
-PROD = os.getenv("PRODUCTION")
-
 # Load and preprocess the data
-if PROD:
-    para_muni = gpd.read_file("data/para_muni.geojson")
-    hex_gdf_part1 = gpd.read_parquet("data/180724_dashboard_hexs_part1.parquet")
-    hex_gdf_part2 = gpd.read_parquet("data/180724_dashboard_hexs_part2.parquet")
-    hex_gdf = pd.concat([hex_gdf_part1, hex_gdf_part2])
-else:
-    para_muni = gpd.read_file("../outputs/para_muni.geojson")
-    hex_gdf = gpd.read_parquet("../outputs/180724_dashboard_hexs.parquet")
+para_muni = gpd.read_file("data/para_muni.geojson")
+
+hex_gdf_part1 = gpd.read_parquet("data/180724_dashboard_hexs_part1.parquet")
+hex_gdf_part2 = gpd.read_parquet("data/180724_dashboard_hexs_part2.parquet")
+hex_gdf = pd.concat([hex_gdf_part1, hex_gdf_part2])
 
 education_levels = ["INF_CRE", "INF_PRE", "FUND_AI", "FUND_AF", "MED"]
 education_levels_labels = {
