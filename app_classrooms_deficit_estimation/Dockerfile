@@ -18,6 +18,4 @@ COPY . /usr/src/app
 
 EXPOSE 8000
 
-RUN chmod +x ./runserver.sh
-
-CMD ["sh", "./runserver.sh"]
+CMD ["gunicorn", "app:server"]  

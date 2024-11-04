@@ -17,8 +17,9 @@ PROD = os.getenv("PRODUCTION")
 # Load and preprocess the data
 if PROD:
     para_muni = gpd.read_file("data/para_muni.geojson")
-    # Downloaded from https://drive.usercontent.google.com/download?id=1U4bFDfcix7UKhCBBRQIgNFEQCFB9uG6P&export=download&confirm=t&uuid=03d5160f-48e9-42bb-be45-eed6fd03bcd3&at=AN_67v1mOk0aVdyLv31zU65ZAELh%3A1727433519136
-    hex_gdf = gpd.read_parquet("data/180724_dashboard_hexs.parquet")
+    hex_gdf_part1 = gpd.read_parquet("data/180724_dashboard_hexs_part1.parquet")
+    hex_gdf_part2 = gpd.read_parquet("data/180724_dashboard_hexs_part2.parquet")
+    hex_gdf = pd.concat([hex_gdf_part1, hex_gdf_part2])
 else:
     para_muni = gpd.read_file("../outputs/para_muni.geojson")
     hex_gdf = gpd.read_parquet("../outputs/180724_dashboard_hexs.parquet")
