@@ -15,8 +15,20 @@ from shapely.geometry import Polygon
 # Load and preprocess the data
 para_muni = gpd.read_file("data/para_muni.geojson")
 
-hex_gdf_part1 = gpd.read_parquet("data/180724_dashboard_hexs_part1.parquet")
-hex_gdf_part2 = gpd.read_parquet("data/180724_dashboard_hexs_part2.parquet")
+# Read only required columns to save memory
+required_columns = [
+    "name_muni",
+    "QT_MAT_INF_CRE", "QT_MAT_INF_PRE", "QT_MAT_FUND_AI", "QT_MAT_FUND_AF", "QT_MAT_MED",
+    "QT_MAT_INF_CRE_INT", "QT_MAT_INF_PRE_INT", "QT_MAT_FUND_AI_INT", "QT_MAT_FUND_AF_INT", "QT_MAT_MED_INT",
+    "QT_MAT_INF_CRE_PROP", "QT_MAT_INF_PRE_PROP", "QT_MAT_FUND_AI_PROP", "QT_MAT_FUND_AF_PROP", "QT_MAT_MED_PROP",
+    "QT_MAT_BAS_N",
+    "QT_SALAS_UTILIZADAS",
+    "hex",
+    "geometry",
+]
+
+hex_gdf_part1 = gpd.read_parquet("data/180724_dashboard_hexs_part1.parquet", columns=required_columns)
+hex_gdf_part2 = gpd.read_parquet("data/180724_dashboard_hexs_part2.parquet", columns=required_columns)
 hex_gdf = pd.concat([hex_gdf_part1, hex_gdf_part2])
 
 education_levels = ["INF_CRE", "INF_PRE", "FUND_AI", "FUND_AF", "MED"]
