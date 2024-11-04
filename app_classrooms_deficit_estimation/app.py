@@ -25,10 +25,7 @@ required_columns = [
     "QT_SALAS_UTILIZADAS",
     "hex"
 ]
-
-hex_df_part1 = pd.read_parquet("data/180724_dashboard_hexs_part1.parquet", columns=required_columns)
-hex_df_part2 = pd.read_parquet("data/180724_dashboard_hexs_part2.parquet", columns=required_columns)
-hex_gdf = pd.concat([hex_df_part1, hex_df_part2])
+hex_gdf = pd.read_parquet("data/180724_dashboard_hexs.parquet", columns=required_columns)
 
 education_levels = ["INF_CRE", "INF_PRE", "FUND_AI", "FUND_AF", "MED"]
 education_levels_labels = {
