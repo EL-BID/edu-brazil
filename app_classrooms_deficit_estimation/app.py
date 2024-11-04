@@ -23,13 +23,12 @@ required_columns = [
     "QT_MAT_INF_CRE_PROP", "QT_MAT_INF_PRE_PROP", "QT_MAT_FUND_AI_PROP", "QT_MAT_FUND_AF_PROP", "QT_MAT_MED_PROP",
     "QT_MAT_BAS_N",
     "QT_SALAS_UTILIZADAS",
-    "hex",
-    "geometry",
+    "hex"
 ]
 
-hex_gdf_part1 = gpd.read_parquet("data/180724_dashboard_hexs_part1.parquet", columns=required_columns)
-hex_gdf_part2 = gpd.read_parquet("data/180724_dashboard_hexs_part2.parquet", columns=required_columns)
-hex_gdf = pd.concat([hex_gdf_part1, hex_gdf_part2])
+hex_df_part1 = pd.read_parquet("data/180724_dashboard_hexs_part1.parquet", columns=required_columns)
+hex_df_part2 = pd.read_parquet("data/180724_dashboard_hexs_part2.parquet", columns=required_columns)
+hex_gdf = pd.concat([hex_df_part1, hex_df_part2])
 
 education_levels = ["INF_CRE", "INF_PRE", "FUND_AI", "FUND_AF", "MED"]
 education_levels_labels = {
@@ -72,40 +71,56 @@ COLUMN_LABELS = {
 # This table should help users quickly understand the implications of choosing different resolutions by relating each option to familiar concepts and providing a concise description of the coverage and detail level.
 
 H3HEX_RESOLUTIONS = {
-    5: {"area": 252.90, "analogy": "Size of a small town", "description": "Covers a large area with multiple districts."},
-    6: {"area": 36.13, "analogy": "Size of a district", "description": "Covers a moderate area usually with a few neighborhoods."},
-    7: {"area": 5.16, "analogy": "Size of a zone", "description": "Covers a smaller area containing one or two neighborhoods at most."},
-    8: {"area": 0.74, "analogy": "Size of a neighborhood", "description": "Covers a very specific area with a few blocks, suitable for local analyses."},
+    5: {
+        'area': 2.56,
+        'analogy': 'Área de um bairro pequeno',
+        'description': 'Adequado para análises em nível de bairro ou pequenas áreas urbanas.'
+    },
+    6: {
+        'area': 0.65,
+        'analogy': 'Área de um quarteirão',
+        'description': 'Adequado para análises em nível de quarteirão ou áreas urbanas médias.'
+    },
+    7: {
+        'area': 0.16,
+        'analogy': 'Área de um conjunto de edifícios',
+        'description': 'Adequado para análises em nível de conjunto de edifícios ou áreas urbanas densas.'
+    },
+    8: {
+        'area': 0.04,
+        'analogy': 'Área de um edifício grande',
+        'description': 'Adequado para análises em nível de edifício ou áreas urbanas muito densas.'
+    }
 }
 # Slider marks with resolution, analogy, and description
 slider_marks = {
-    5: '~252.9 km² (Town size)',
-    6: '~36.13 km² (District size)',
-    7: '~5.16 km² (District Zone size)',
+    5: '~252.9 km² (Cidade pequena)',
+    6: '~36.13 km² (Bairro)',
+    7: '~5.16 km² (Zona de bairro)',
     8: {
-        'label': '~0.74 km² (Neighborhood size)', 
+        'label': '~0.74 km² (Vizinhança)', 
         # Force the label to be in a single line
         'style': {'white-space': 'nowrap'}
     }
 }
 
 
-def calculate_table_data(name_muni):
+def calculate_table_data(name_muni=None):
 
-    if "name_muni" in hex_gdf.columns:
-        belem_hexs = hex_gdf[hex_gdf["name_muni"] == name_muni]
+    if "name_muni" in hex_gdf.columns and name_muni:
+        filtered_hexs = hex_gdf[hex_gdf["name_muni"] == name_muni]
     else:
-        PreventUpdate
+        filtered_hexs = hex_gdf
         
     # Calculate defaults for the table
     main_table = []
     # total number of students on each level
-    main_table.append(belem_hexs[[f'QT_MAT_{level}' for level in education_levels]].sum().values.tolist())
+    main_table.append(filtered_hexs[[f'QT_MAT_{level}' for level in education_levels]].sum().values.tolist())
     # percentage of students in integral time (Tempo Integral)
-    main_table.append([belem_hexs[f"QT_MAT_{level}_INT"].sum() / belem_hexs[f"QT_MAT_{level}"].sum() for level in education_levels])
+    main_table.append([filtered_hexs[f"QT_MAT_{level}_INT"].sum() / filtered_hexs[f"QT_MAT_{level}"].sum() for level in education_levels])
     # percentage of students in nocturnal time (Tempo Noturno)
     main_table.append([
-        (belem_hexs["QT_MAT_BAS_N"] * belem_hexs[f"QT_MAT_{level}_PROP"]).sum() / belem_hexs[f"QT_MAT_{level}"].sum()
+        (filtered_hexs["QT_MAT_BAS_N"] * filtered_hexs[f"QT_MAT_{level}_PROP"]).sum() / filtered_hexs[f"QT_MAT_{level}"].sum()
         if level not in ["INF_CRE", "INF_PRE", "FUND_AI"] else 0 
         for level in education_levels 
     ])
@@ -129,7 +144,7 @@ def calculate_table_data(name_muni):
     main_table.loc["Num. Salas Necessárias"] = np.ceil(main_table.loc["Total de Crianças"] / num_chairs)
 
     # Actual number of classrooms
-    main_table.loc["Num. Salas Atuais"] = [np.ceil((belem_hexs["QT_SALAS_UTILIZADAS"] * belem_hexs[f"QT_MAT_{level}_PROP"]).sum()) for level in education_levels]
+    main_table.loc["Num. Salas Atuais"] = [np.ceil((filtered_hexs["QT_SALAS_UTILIZADAS"] * filtered_hexs[f"QT_MAT_{level}_PROP"]).sum()) for level in education_levels]
 
     # Number of classrooms needed in each level
     main_table.loc["Num. Salas Novas"] = np.ceil(
@@ -143,10 +158,14 @@ def calculate_table_data(name_muni):
 
     return main_table
 
+
 def calculate_extra_salas(name_muni, selected_variables, rows, hex_res):
 
     # Visualize the results for the selected municipality
-    muni_hexagons = hex_gdf[hex_gdf["name_muni"] == name_muni]
+    if "name_muni" in hex_gdf.columns and name_muni:
+        muni_hexagons = hex_gdf[hex_gdf["name_muni"] == name_muni]
+    else:
+        muni_hexagons = hex_gdf
 
     # Calculate the number of classrooms needed based on the user defined variables
     main_table = pd.DataFrame(rows)
@@ -194,12 +213,23 @@ def calculate_extra_salas(name_muni, selected_variables, rows, hex_res):
 
     if hex_res != current_hex_res:
         print(f"Rescaling the hexagons to resolution {hex_res} ... ", end="")
-        muni_hexagons = up.geom.resolution_downsampling(
-            muni_hexagons,
-            "hex",
-            hex_res,
-            {f"QT_SALAS_NECESARIAS_EXTRA_{level}": "sum" for level in education_levels} | {"SalasNecessariasAcum": "sum"},
+
+        # muni_hexagons = up.geom.resolution_downsampling(
+        #     muni_hexagons,
+        #     "hex",
+        #     hex_res,
+        #     {f"QT_SALAS_NECESARIAS_EXTRA_{level}": "sum" for level in education_levels} | {"SalasNecessariasAcum": "sum"},
+        # )
+        agg = {f"QT_SALAS_NECESARIAS_EXTRA_{level}": "sum" for level in education_levels} | {"SalasNecessariasAcum": "sum"}
+
+        coarse_hex_col = "hex_{}".format(hex_res)
+        muni_hexagons[coarse_hex_col] = muni_hexagons["hex"].apply(
+            lambda x: h3.h3_to_parent(x, hex_res)
         )
+        dfc = muni_hexagons.groupby([coarse_hex_col]).agg(agg).reset_index()
+        gdfc_geometry = dfc[coarse_hex_col].apply(lambda x: Polygon(h3.h3_to_geo_boundary(x, geo_json=True)))
+        
+        muni_hexagons = gpd.GeoDataFrame(dfc, geometry=gdfc_geometry, crs="EPSG:4326")
 
     print("COLUMNS IN HEXAGON DATAFRAME", muni_hexagons.columns)
     if 'hex' in muni_hexagons.columns:
@@ -222,43 +252,53 @@ tooltips = [
     for index, row in initial_table_data.iterrows() 
 ]
 
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
 
 server = app.server
 
 # Layout
-app.layout = dbc.Container(
+
+app_header = dbc.Row(
     [
-        dbc.Row(
+        dbc.Col(
+            [
+                # Title in portuguese
+                html.H1("Dashboard de Educação"),
+                dbc.Alert(
+                    dcc.Markdown('''
+                        Este é um painel de controle de educação que permite visualizar as salas de aula necessárias em diferentes níveis de ensino para um município selecionado. 
+
+                        Para usar o painel, siga estas etapas:  
+                                    
+                        1. Selecione um estado no primeiro menu suspenso.  
+                        2. Selecione um município no segundo menu suspenso.  
+                        3. A tabela exibirá os dados iniciais sobre o número de salas de aula necessárias em cada nível de ensino.  
+                        4. Você pode editar os valores na tabela, se desejar.  
+                        5. Clique no botão "Reset Table" para redefinir a tabela para os valores iniciais.  
+                        6. No "Mapa de Salas Necessárias", selecione as variáveis que deseja visualizar no menu suspenso "Select variables to visualize".  
+                        7. Use o controle deslizante "Tamanho do Hexágono" para ajustar o tamanho dos hexágonos no "Mapa de Salas Necessárias".  
+                        8. O "Mapa de Salas Necessárias" mostrará as salas de aula necessárias para as variáveis selecionadas no município escolhido.  
+
+                        Divirta-se explorando o painel de controle de educação!
+                    '''),
+                    id="alert-fade",
+                    dismissable=True,
+                    is_open=True,
+                    color="primary",
+                    # Add a bottom margin
+                    style={"margin-bottom": "20px"},
+                ),
+            ]
+        )
+    ]
+)
+
+app_control_panel = [
+    html.Br(),
+    dbc.Row(
             [
                 dbc.Col(
                     [
-                        # Title in portuguese
-                        html.H1("Dashboard de Educação"),
-                        dbc.Alert(
-                            dcc.Markdown('''
-                                Este é um painel de controle de educação que permite visualizar as salas de aula necessárias em diferentes níveis de ensino para um município selecionado. 
-
-                                Para usar o painel, siga estas etapas:  
-                                         
-                                1. Selecione um estado no primeiro menu suspenso.  
-                                2. Selecione um município no segundo menu suspenso.  
-                                3. A tabela exibirá os dados iniciais sobre o número de salas de aula necessárias em cada nível de ensino.  
-                                4. Você pode editar os valores na tabela, se desejar.  
-                                5. Clique no botão "Reset Table" para redefinir a tabela para os valores iniciais.  
-                                6. No "Mapa de Salas Necessárias", selecione as variáveis que deseja visualizar no menu suspenso "Select variables to visualize".  
-                                7. Use o controle deslizante "Tamanho do Hexágono" para ajustar o tamanho dos hexágonos no "Mapa de Salas Necessárias".  
-                                8. O "Mapa de Salas Necessárias" mostrará as salas de aula necessárias para as variáveis selecionadas no município escolhido.  
-
-                                Divirta-se explorando o painel de controle de educação!
-                            '''),
-                            id="alert-fade",
-                            dismissable=True,
-                            is_open=True,
-                            color="primary",
-                            # Add a bottom margin
-                            style={"margin-bottom": "20px"},
-                        ),
                         dcc.Dropdown(
                             id="state-dropdown",
                             options=[
@@ -287,13 +327,17 @@ app.layout = dbc.Container(
             ],
             style={"margin-bottom": "20px"},
         ),
-        dbc.Row(
+    dbc.Row(
             [
                 dbc.Col(
                     [
                         dash_table.DataTable(
                             id="computed-table",
-                            columns=[{"name": i, "id": i, "type": "numeric", "format": Format(precision=2, scheme=Scheme.fixed)} if i != "index" else {"name": i, "id": i} for i in initial_table_data.columns],
+                            columns=[
+                                {"name": i, "id": i, "type": "numeric", "format": Format(precision=2, scheme=Scheme.fixed)} 
+                                if i != "index" else {"name": "", "id": i} 
+                                for i in initial_table_data.columns
+                            ],
                             tooltip_data=tooltips,
                             data=[
                                 {**row, **{'editable': False}} if index in calculated_rows else {**row, **{'editable': True}}
@@ -318,6 +362,12 @@ app.layout = dbc.Container(
                                     'if': {'row_index': calculated_rows, 'column_type': 'numeric'},
                                     'backgroundColor': 'rgb(230, 230, 255)',
                                     'fontWeight': 'bold'
+                                },
+                                {
+                                    'if': {'row_index': [1, 2], 'column_type': 'numeric'},
+                                    # 
+
+                                    
                                 }
                             ],
                         ),
@@ -329,7 +379,7 @@ app.layout = dbc.Container(
                 ),
             ]
         ),
-        dbc.Row(
+    dbc.Row(
             [
                 dbc.Col(
                     [
@@ -409,20 +459,51 @@ app.layout = dbc.Container(
                         html.Hr(),
                         # Center the button
                         html.Div(
-                            dbc.Button("Create Report", id="create-report-button", color="primary", className="mr-1 mt-2 align-self-center justify-content-center"),
+                            dbc.Button(
+                                "Gerar Relatório",
+                                id="create-report-button", 
+                                color="primary", 
+                                className="mr-1 mt-2 align-self-center justify-content-center"
+                            ),
                             className="d-flex justify-content-center"
                         ),
-                        html.Hr(),
-                        html.Div(id="report-container"),
-    
-
-
+                        html.Br(),
                     ], 
                     width=12)
             ]
         ),
-    ]
+]
+
+app_report = [
+    dbc.Row(
+        [
+            dbc.Col(
+                [
+                    # html.H2("Relatório de Análise"),
+                    html.Br(),
+                    html.Div(id="report-container"),
+                    html.Br(),
+                ],
+                width=12,
+            ),
+        ]
+    )
+]
+
+tabs = dbc.Tabs(
+    [
+        dbc.Tab(app_control_panel, label="Configurações", tab_id="tab-1"),
+        dbc.Tab(app_report, label="Relatório", tab_id="tab-2"),
+    ],
+    id="tabs",
+    active_tab="tab-1",
 )
+
+app.layout = dbc.Container([
+        dcc.Location(id='url', refresh=False),
+        app_header,
+        tabs
+])
 
 # Callbacks
 @app.callback(
@@ -430,9 +511,7 @@ app.layout = dbc.Container(
     Input("municipality-dropdown", "value"),
 )
 def calculate_table(selected_municipality):
-    if not selected_municipality:
-        return None
-    
+
     table_data = calculate_table_data(selected_municipality)
     
     return table_data.to_dict("records")
@@ -488,21 +567,21 @@ def reset_table(n_clicks, selected_municipality):
         Input("value-range-slider", "value"),
         State('computed-table', 'data'))
 def update_map(selected_municipality, selected_variables, hex_res, timestamp, value_range, rows):
-    if not selected_municipality:
-        print("No municipality selected")
-        return px.choropleth_mapbox(
-            hex_gdf,
-            geojson=hex_gdf.geometry.__geo_interface__,
-            locations=hex_gdf.index,
-            color="QT_SALAS_UTILIZADAS",  # You can change this to any other column
-            color_continuous_scale="RdYlGn",
-            mapbox_style="carto-positron",
-            zoom=8,
-            center={
-                "lat": hex_gdf.geometry.centroid.y.mean(),
-                "lon": hex_gdf.geometry.centroid.x.mean(),
-            },
-        ), None
+    # if not selected_municipality:
+    #     print("No municipality selected")
+    #     return px.choropleth_mapbox(
+    #         hex_gdf,
+    #         geojson=hex_gdf.geometry.__geo_interface__,
+    #         locations=hex_gdf.index,
+    #         color="QT_SALAS_UTILIZADAS",  # You can change this to any other column
+    #         color_continuous_scale="RdYlGn",
+    #         mapbox_style="carto-positron",
+    #         zoom=8,
+    #         center={
+    #             "lat": hex_gdf.geometry.centroid.y.mean(),
+    #             "lon": hex_gdf.geometry.centroid.x.mean(),
+    #         },
+    #     ), None
     
     # Process the data 
     muni_hexagons = calculate_extra_salas(selected_municipality, selected_variables, rows, hex_res)
@@ -522,7 +601,7 @@ def update_map(selected_municipality, selected_variables, hex_res, timestamp, va
         mapbox_style="carto-positron",
         labels={f"QT_SALAS_NECESARIAS_EXTRA_{level}": education_levels_labels[level] for level in education_levels} | {"SalasNecessariasAcum": "Salas Necessárias Extra"},
         # labels={var: education_levels_labels[var] for var in selected_variables} | {"SalasNecessariasAcum": "Salas Necessárias Extra"},
-        zoom=8,
+        zoom=8 if selected_municipality else 4,
         center={
             "lat": muni_hexagons.geometry.centroid.y.mean(),
             "lon": muni_hexagons.geometry.centroid.x.mean(),
@@ -598,9 +677,10 @@ def update_histogram_and_slider(jsonified_data, value_range):
     Input("histogram-graph", "figure"),
     [State("hexagon-size-slider", "value"),
      State("map-data-store", "data"),
-     State("value-range-slider", "value")]
+     State("value-range-slider", "value"),
+    State("municipality-dropdown", "value")]
 )
-def update_filtered_map(hist_map, hex_size, jsonified_data, value_range):
+def update_filtered_map(hist_map, hex_size, jsonified_data, value_range, selected_municipality):
     # Load the DataFrame from JSON
     muni_hexagons = pd.read_json(jsonified_data, orient='split')
 
@@ -634,7 +714,7 @@ def update_filtered_map(hist_map, hex_size, jsonified_data, value_range):
         mapbox_style="carto-positron",
         labels={f"QT_SALAS_NECESARIAS_EXTRA_{level}": education_levels_labels[level] for level in education_levels} | {"SalasNecessariasAcum": "Salas Necessárias Extra"},
         # labels={var: education_levels_labels[var] for var in selected_variables} | {"SalasNecessariasAcum": "Salas Necessárias Extra"},
-        zoom=8,
+        zoom= 8 if selected_municipality else 4,
         center={
             "lat": filtered_df.geometry.centroid.y.mean(),
             "lon": filtered_df.geometry.centroid.x.mean(),
@@ -648,10 +728,24 @@ def update_filtered_map(hist_map, hex_size, jsonified_data, value_range):
 
     return filtered_map_figure
 
+# callback for showing a spinner within dbc.Button()
+import json
+app.clientside_callback(
+    """
+    function (click) {
+        return [""" + json.dumps(dbc.Spinner(size='sm').to_plotly_json()) + """, " Gerando Relatório ..."]
+    }
+    """,
+    Output("create-report-button", "children"),
+    Input("create-report-button", "n_clicks"),
+    prevent_initial_call=True
+)
 
 
 @app.callback(
-    Output("report-container", "children"),
+    [Output("create-report-button", "children", allow_duplicate=True),
+     Output("report-container", "children"),
+     Output("tabs", "active_tab")],
     Input("create-report-button", "n_clicks"),
     [State("hexagon-size-slider", "value"),
      State("map-variable-dropdown", "value"),
@@ -661,9 +755,11 @@ def update_filtered_map(hist_map, hex_size, jsonified_data, value_range):
      State("map-graph", "figure"),
      State("municipality-dropdown", "value"),
      State("state-dropdown", "value")
-     ]
+     ],
+    prevent_initial_call=True
 )
 def create_report(n_clicks, hex_size, selected_education_levels, computed_table_data, jsonified_data, value_range, map_figure, selected_municipality, selected_state):
+        
     if n_clicks is None:
         raise PreventUpdate
     
@@ -889,6 +985,12 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
         # Iterate over the selected hexagons
         hexagon_detail_list = []
 
+        print("df cols", df.columns)
+
+        df = df.sort_values("QT_SALAS_NECESARIAS_EXTRA_TOTAL", ascending=False)
+        # Create a numerical index for the hexagons (1, 2, 3, ...)
+        df["#"] = list(range(1, len(df) + 1))
+
         for index, row in df.iterrows():
 
             # Create a map for each hexagon
@@ -935,14 +1037,13 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
             # print("ROW INFO", row)
             row_df = row.to_frame().reset_index()
             row_df.columns = ["Variável", "Valor"]
-            # print("ROW DF", row_df)
+            print("ROW DF", row_df)
 
             selected_columns = [f"QT_SALAS_NECESARIAS_EXTRA_{level}" for level in education_levels+["TOTAL"]] + ["short_address", "city_state"]
             filtered_row_df = row_df.loc[row_df["Variável"].isin(selected_columns)]
 
             column_labels = {**COLUMN_LABELS, **{f"hex_{hex_size}": "Id do Hexágono"}}
             
-
             ordered_index = [value for key, value in column_labels.items() if key in filtered_row_df["Variável"].unique()]
 
             filtered_row_df["Variável"] = filtered_row_df["Variável"].map(column_labels)
@@ -950,7 +1051,6 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
             filtered_row_df = filtered_row_df.set_index("Variável")
             
             filtered_row_df = filtered_row_df.loc[ordered_index]
-            
 
             # row_info_dashtable = dash_table.DataTable(
             #     data=row_df.to_dict("records"),
@@ -984,16 +1084,17 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
                 html.Thead(html.Tr([html.Th("Variável"), html.Th("Valor")]))
             ]
 
-            rows = []
-            for i, row in filtered_row_df.iterrows():
+            table_rows = []
+            print("filtered_row_df ocls", filtered_row_df.columns)
+            for i, trow in filtered_row_df.iterrows():
                 # Check if the education level is in the selected levels
                 if i in [COLUMN_LABELS[level] for level in selected_education_levels]:
                     
-                    rows.append(html.Tr([html.Td(dbc.Badge(i, color="warning", className="me-1")), html.Td(dbc.Badge(row.values[0], color="warning", className="me-1"))]))
+                    table_rows.append(html.Tr([html.Td(dbc.Badge(i, color="warning", className="me-1")), html.Td(dbc.Badge(trow.values[0], color="warning", className="me-1"))]))
                 else:
-                    rows.append(html.Tr([html.Td(i), html.Td(row.values[0])]))
+                    table_rows.append(html.Tr([html.Td(i), html.Td(trow.values[0])]))
 
-            table_body = [html.Tbody(rows)]
+            table_body = [html.Tbody(table_rows)]
 
             table = dbc.Table(table_header + table_body, bordered=True)
 
@@ -1004,7 +1105,7 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
                         [
                             "Id do Hexágono: ",
                             # Open the h3geo.org website with the hexagon index on a new tab https://h3geo.org/#hex={row.values[0]}
-                            html.A(row.values[0], href=f"https://h3geo.org/#hex={row.values[0]}", target="_blank"),
+                            html.A(row["#"], href=f"https://h3geo.org/#hex={row.values[0]}", target="_blank"),
                         ]
                     ),
                     dbc.CardBody(
@@ -1031,6 +1132,11 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
 
     print("filtered_df.columns", filtered_df.columns)
 
+    if selected_municipality is None:
+        regiao_selectionada_text = selected_state.upper()
+    else:
+        regiao_selectionada_text = f"{selected_municipality.capitalize()}, {selected_state.upper()}"
+
     report_components = [
         
         html.H3("Relatório de Demanda de Salas"),
@@ -1038,7 +1144,7 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
         print("selected_education_levels", selected_education_levels),
         dcc.Markdown(f'''
         
-        - **Região selecionada**: {selected_municipality.capitalize()}, {selected_state.upper()}
+        - **Região selecionada**: {regiao_selectionada_text}
         - **Níveis de Ensino Selecionados**: {", ".join([COLUMN_LABELS[level] for level in selected_education_levels])}
         - **Tamanho do hexágono selecionado**: 
             - **Área**: {H3HEX_RESOLUTIONS[hex_size]['area']} km²
@@ -1061,9 +1167,25 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
         html.Br(),
         html.H4("Salas Necessárias por Hexágono"),
         generate_hexagon_maps(filtered_df),
+        html.Br(),
+        dbc.Button("Imprimir Relatório", id="print-pdf-button", color="primary", className="mr-1 mt-2 align-self-center justify-content-center"),
     ]
 
-    return report_components
+    return "Gerar Relatório", report_components, "tab-2"
+
+app.clientside_callback(
+    """
+    function(n_clicks) {
+        
+        window.print();
+        
+        return "Imprimir Relatório"
+    }
+    """,
+    Output("print-pdf-button", "children"),
+    Input('print-pdf-button', 'n_clicks'),
+    prevent_initial_call=True
+)
 
 if __name__ == "__main__":
     app.run(debug=True)
