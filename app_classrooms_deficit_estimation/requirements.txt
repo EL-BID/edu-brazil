@@ -40,6 +40,8 @@ geopandas==1.0.1
     #   urbanpy
 googlemaps==4.10.0
     # via urbanpy
+gunicorn==23.0.0
+    # via app-classrooms-deficit-estimation (pyproject.toml)
 h3==3.7.7
     # via
     #   app-classrooms-deficit-estimation (pyproject.toml)
@@ -82,6 +84,7 @@ osmnx==1.9.3
 packaging==24.1
     # via
     #   geopandas
+    #   gunicorn
     #   matplotlib
     #   plotly
     #   pyogrio
