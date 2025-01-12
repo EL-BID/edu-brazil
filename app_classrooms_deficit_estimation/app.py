@@ -1,4 +1,5 @@
-import os
+
+import json
 import dash
 from dash import dcc, html, Input, Output, dash_table, State
 from dash.exceptions import PreventUpdate
@@ -40,20 +41,21 @@ education_levels_short_labels = {
     "INF_PRE": "Pré-Escola",
     "FUND_AI": "Fund. Anos Iniciais",
     "FUND_AF": "Fund. Anos Finais",
-    "MED": "Médio",
-    "index": "index",
+    "MED": "Ensino Médio",
+    "index": "",
 }
 
+# Note to avoid merging empty columns names, we will use variable length empty strings e.g. " ", "  ", "   ", etc.
 COLUMN_LABELS = {
-    "#": "#",
-    "short_address": "Endereço",
-    "city_state": "Cidade",
-    "QT_SALAS_NECESARIAS_EXTRA_TOTAL": "Total",
-    'QT_SALAS_NECESARIAS_EXTRA_INF_CRE': "Creche",
-    'QT_SALAS_NECESARIAS_EXTRA_INF_PRE': "Pré-Escola",
-    'QT_SALAS_NECESARIAS_EXTRA_FUND_AI': "Fund.\nAnos Iniciais",
-    'QT_SALAS_NECESARIAS_EXTRA_FUND_AF': "Fund.\nAnos Finais",
-    'QT_SALAS_NECESARIAS_EXTRA_MED': "Ensino Médio",
+    "#": ["", "#"],
+    "short_address": [" ", "Endereço"],
+    "city_state": ["  ", "Cidade"],
+    "QT_SALAS_NECESARIAS_EXTRA_TOTAL": ["Número de Novas Salas Necessárias", "Total"],
+    'QT_SALAS_NECESARIAS_EXTRA_INF_CRE': ["Número de Novas Salas Necessárias", "Creche"],
+    'QT_SALAS_NECESARIAS_EXTRA_INF_PRE': ["Número de Novas Salas Necessárias", "Pré-Escola"],
+    'QT_SALAS_NECESARIAS_EXTRA_FUND_AI': ["Número de Novas Salas Necessárias", "Fund.\nAnos Iniciais"],
+    'QT_SALAS_NECESARIAS_EXTRA_FUND_AF': ["Número de Novas Salas Necessárias", "Fund.\nAnos Finais"],
+    'QT_SALAS_NECESARIAS_EXTRA_MED': ["Número de Novas Salas Necessárias", "Ensino Médio"],
 }
 
 #  Here’s a table that combines the resolution, average hexagon area in km², a relatable analogy, and a simple comparative description:
@@ -124,28 +126,37 @@ def calculate_table_data(name_muni=None):
     # total number of places available
     total_places = []
     for i, level in enumerate(education_levels):
-        # total number of students * (1 + percentage of students in integral time) * (1 - percentage of students in nocturnal time
+        # total number of students * (1 + percentage of students in integral time) * (1 - percentage of students in nocturnal time)
         num_cadeiras = main_table[0][i] * (1 + main_table[1][i]) * (1 - main_table[2][i])
         total_places.append(num_cadeiras)
     main_table.append(total_places)
 
-    main_table = pd.DataFrame(main_table, columns=education_levels, index=["Total Alunos Atualmente", "Integral (%)", "Nocturno (%)", "Total de Crianças"]) 
+    main_table = pd.DataFrame(main_table, columns=education_levels, index=["Número Total de Alunos Matriculados", "% Alunos em Tempo Integral Matriculados", "% Alunos de período Noturno", "Número Total de Vagas Necessárias"]) 
 
     # Calculate the number of classrooms needed based on the user defined number of chairs per classroom
 
-    # Number of chairs per classroom
-    num_chairs = 30
-    main_table.loc["Total de Crianças por Sala"] = num_chairs
+    # Number of chairs per classroom 
+    # Source: https://normativasconselhos.mec.gov.br/normativa/pdf/CEE-PA_RESOLUC387C383O20001.201020REGULAMENTAC387C383O20EDUC.20BAS.20atualizada20em2001.06.2015_0.pdf
+    # Creche/Daycare (0 to 1 years) - 8 students per classroom (NOT CONSIDERED)
+    # Creche/Daycare (1 to 3 years) - 15 students per classroom
+    # Pré-Escola/Pre-Kindergarten (4 to 5 years) - 25 students per classroom
+    # Anos Iniciais do Ensino Fundamental/Elementary School (6 to 10 years) - 35 students per classroom
+    # Anos Finais do Ensino Fundamental/Middle School (11 to 14 years) - 40 students per classroom
+    # Ensino Médio/High School (15 to 17 years) - 40 students per classroom
+
+    # education_levels = ["INF_CRE", "INF_PRE", "FUND_AI", "FUND_AF", "MED"]
+    num_chairs = [15, 25, 35, 40, 40]
+    main_table.loc["Número Total de Vagas por Sala"] = num_chairs
 
     # Number of classrooms needed in total
-    main_table.loc["Num. Salas Necessárias"] = np.ceil(main_table.loc["Total de Crianças"] / num_chairs)
+    main_table.loc["Número de Salas Necessárias"] = np.ceil(main_table.loc["Número Total de Vagas Necessárias"] / num_chairs)
 
     # Actual number of classrooms
-    main_table.loc["Num. Salas Atuais"] = [np.ceil((filtered_hexs["QT_SALAS_UTILIZADAS"] * filtered_hexs[f"QT_MAT_{level}_PROP"]).sum()) for level in education_levels]
+    main_table.loc["Número de Salas Existentes"] = [np.ceil((filtered_hexs["QT_SALAS_UTILIZADAS"] * filtered_hexs[f"QT_MAT_{level}_PROP"]).sum()) for level in education_levels]
 
     # Number of classrooms needed in each level
-    main_table.loc["Num. Salas Novas"] = np.ceil(
-        np.maximum(main_table.loc["Num. Salas Necessárias"] - main_table.loc["Num. Salas Atuais"], 0)
+    main_table.loc["Número de Novas Salas Necessárias"] = np.ceil(
+        np.maximum(main_table.loc["Número de Salas Necessárias"] - main_table.loc["Número de Salas Existentes"], 0)
     )
 
     main_table.reset_index(inplace=True)
@@ -173,15 +184,15 @@ def calculate_extra_salas(name_muni, selected_variables, rows, hex_res):
     if len(main_table.columns) == 7:
         main_table.columns = ["index"] + education_levels + ["editable"]
 
-    main_table.set_index("index", inplace=True)
+    main_table.set_index(main_table.columns[0], inplace=True)
     main_table.loc[:, education_levels] = main_table[education_levels].astype(float).values
 
     print("Recalculating the number of classrooms needed based on the user defined variables on the table ... ", end="")
     for level in education_levels:
         prop_mat = muni_hexagons[f"QT_MAT_{level}"] / muni_hexagons[f"QT_MAT_{level}"].sum() # proportion of students in each hexagon
-        total_qt_alumnos = prop_mat * main_table.loc["Total Alunos Atualmente", level] # number of students in each hexagon
-        qt_cadeiras = total_qt_alumnos * (1 + main_table.loc["Integral (%)", level]) * (1 - main_table.loc["Nocturno (%)", level]) # number of chairs needed in each hexagon
-        muni_hexagons.loc[:, f"QT_SALAS_NECESARIAS_TOTAL_{level}"] = qt_cadeiras / main_table.loc["Total de Crianças por Sala", level] # number of classrooms needed in each hexagon
+        total_qt_alumnos = prop_mat * main_table.loc["Número Total de Alunos Matriculados", level] # number of students in each hexagon
+        qt_cadeiras = total_qt_alumnos * (1 + main_table.loc["% Alunos em Tempo Integral Matriculados", level]) * (1 - main_table.loc["% Alunos de período Noturno", level]) # number of chairs needed in each hexagon
+        muni_hexagons.loc[:, f"QT_SALAS_NECESARIAS_TOTAL_{level}"] = qt_cadeiras / main_table.loc["Número Total de Vagas por Sala", level] # number of classrooms needed in each hexagon
         muni_hexagons.loc[:, f"QT_SALAS_ACTUALES_{level}"] = (
             muni_hexagons["QT_SALAS_UTILIZADAS"] * muni_hexagons[f"QT_MAT_{level}_PROP"]
         )
@@ -259,24 +270,26 @@ app_header = dbc.Row(
     [
         dbc.Col(
             [
+                html.Br(),
                 # Title in portuguese
-                html.H1("Dashboard de Educação"),
+                html.H2("Dashboard | Gestão de Expansão Escolar: Análise de Necessidades de Salas de Aula"),
+                html.Br(),
                 dbc.Alert(
                     dcc.Markdown('''
-                        Este é um painel de controle de educação que permite visualizar as salas de aula necessárias em diferentes níveis de ensino para um município selecionado. 
-
-                        Para usar o painel, siga estas etapas:  
-                                    
-                        1. Selecione um estado no primeiro menu suspenso.  
-                        2. Selecione um município no segundo menu suspenso.  
-                        3. A tabela exibirá os dados iniciais sobre o número de salas de aula necessárias em cada nível de ensino.  
-                        4. Você pode editar os valores na tabela, se desejar.  
-                        5. Clique no botão "Reset Table" para redefinir a tabela para os valores iniciais.  
-                        6. No "Mapa de Salas Necessárias", selecione as variáveis que deseja visualizar no menu suspenso "Select variables to visualize".  
-                        7. Use o controle deslizante "Tamanho do Hexágono" para ajustar o tamanho dos hexágonos no "Mapa de Salas Necessárias".  
-                        8. O "Mapa de Salas Necessárias" mostrará as salas de aula necessárias para as variáveis selecionadas no município escolhido.  
-
-                        Divirta-se explorando o painel de controle de educação!
+                        Este é um painel de controle educacional que permite visualizar e projetar a necessidade de novas salas de aula em diferentes níveis de ensino, com base na capacidade atual e na demanda existente para um município ou região selecionada.  
+                        
+                        **Como usar o painel: Passo a passo para gestores públicos de educação**  
+                        
+                        1. **Selecione o estado:** No primeiro menu suspenso, escolha o estado que deseja analisar.
+                        1. **Selecione o município:** No segundo menu suspenso, escolha o município dentro do estado selecionado para visualizar os dados específicos da região.
+                        1. **Veja os dados iniciais:** A tabela será preenchida automaticamente com os dados iniciais, mostrando o número de salas de aula necessárias para cada nível de ensino com base na demanda e capacidade atual.
+                        1. **Edite os dados, se necessário:** Caso deseje personalizar os cenários, você pode editar os valores das células verdes na tabela, como número de matrículas, percentual de alunos em período integral e noturno, capacidade máxima por sala, entre outros. As células azuis não são editáveis. 
+                        1. **Redefina os valores:** Se precisar voltar aos valores originais, clique no botão "Resetar Tabela" para restaurar os dados iniciais.
+                        1. **Selecione os níveis de ensino:** No menu suspenso "Selecione os níveis de ensino para analisar", escolha os níveis de ensino que deseja exibir no mapa.
+                        1. **Ajuste o tamanho dos hexágonos:** Use o controle deslizante "Tamanho do Hexágono" para ajustar o nível de detalhe da análise no mapa. Hexágonos menores mostram mais detalhes; hexágonos maiores simplificam a visualização.
+                        1. **Visualize o mapa:** O "Mapa de Salas Necessárias", com hexágonos, exibirá as áreas do município onde há maior necessidade de salas de aula, com base nas variáveis selecionadas e no nível de detalhe configurado.
+                        
+                        **Divirta-se explorando o painel e planeje de forma eficiente a expansão da infraestrutura educacional!**
                     '''),
                     id="alert-fade",
                     dismissable=True,
@@ -369,7 +382,7 @@ app_control_panel = [
                             ],
                         ),
                         # Add a button to reset the table to the initial values
-                        dbc.Button("Reset Table", id="reset-table-button", color="primary", className="mr-1 mt-2 align-self-end"),
+                        dbc.Button("Resetar Tabela", id="reset-table-button", color="primary", className="mr-1 mt-2 align-self-end"),
                     ],
                     width=12,
                     style={"margin-bottom": "20px"},
@@ -380,11 +393,11 @@ app_control_panel = [
             [
                 dbc.Col(
                     [
-                        html.H2("Mapa de Salas Necessárias"),
+                        html.H2("Configurações"),
                         html.Hr(),
                         html.H3("Selecione os níveis de ensino para analisar"),
                         dcc.Markdown(("- Selecione os níveis de ensino que deseja visualizar no mapa.\n"
-                                      "- Os hexágonos no mapa mostrarão o número de salas necessárias extra para todos os níveis de ensino selecionados.\n"
+                                      "- Os hexágonos no mapa mostrarão o número de **novas** salas necessárias para todos os níveis de ensino selecionados.\n"
                                       "- O relatório será gerado com base nos níveis de ensino selecionados.")),
                         dcc.Dropdown(
                             id="map-variable-dropdown",
@@ -399,6 +412,15 @@ app_control_panel = [
                         # Add an slider to change the hexagon size
                         html.Hr(),
                         html.H3("Tamanho do Hexágono"),
+                        dcc.Markdown("""
+                        O tamanho do hexágono determina o nível de detalhe na análise:  
+                        
+                        - Hexágonos maiores (~252,9 km²) oferecem uma visão ampla, ideal para tendências em nível de cidade;
+                        - Hexágonos médios (~36,13 km² a ~5,16 km²) são adequados para análises em nível de bairro;
+                        - Hexágonos menores (~0,74 km²) proporcionam detalhes precisos e localizados para identificar áreas críticas. 
+                        
+                        Escolha hexágonos maiores para tendências macro e menores para análises detalhadas e específicas.
+                        """),
                         dcc.Slider(
                             id="hexagon-size-slider",
                             min=5,
@@ -411,18 +433,26 @@ app_control_panel = [
                         html.Hr(),
 
                         dcc.Store(id='map-data-store'),
+
+                        html.H3("Mapa de Salas Necessárias"),
                         dcc.Graph(id="map-graph"),
                         html.Hr(),
 
-                        html.H3("Configurações do Reporte"),
+                        html.H3("Configurações do Relatório"),
+                        dcc.Markdown("""
+                            Para identificar onde expandir ou construir novas escolas, ajuste o intervalo de análise para o **número de novas salas necessárias**. 
+                            Dessa maneira o relatório irá **filtrar as áreas no mapa** com base o número de novas salas selecionado.
+                        """),
                         dbc.Row(
                             [
                                 dbc.Col(
                                     [
                                         # Add a histogram and a range slider
-                                        dcc.Markdown(("#### Selecione um intervalo de salas necessárias extra para filtrar as áreas no mapa:\n"
-                                                    "- Arraste as extremidades do controle deslizante para ajustar o intervalo.\n"
-                                                    "- As barras mostram a quantidade de hexágonos que têm um número de salas necessárias extra dentro do intervalo selecionado.")),
+                                        dcc.Markdown((
+                                            "#### Ajuste o intervalo de análise:\n"
+                                            "- **Controle Deslizante:** Arraste as extremidades do controle deslizante abaixo do gráfico para definir o intervalo desejado de novas salas dos hexágonos a serem destacados.\n"
+                                            "- **Barras:** Mostram a quantidade de hexágonos que precisam de **novas** salas dentro do intervalo selecionado."
+                                        )),
                                         dcc.Graph(id="histogram-graph"),
                                         html.Br(),
                                         dcc.RangeSlider(
@@ -444,9 +474,9 @@ app_control_panel = [
                                 ),
                                 dbc.Col(
                                     [
-                                        dcc.Markdown(("#### Mapa com Hexágonos Selecionados:\n"
-                                                      "- Este mapa mostra os hexágonos que têm um número de salas necessárias extra dentro do intervalo selecionado.\n"
-                                                      "- Os hexágonos são filtrados com base no intervalo selecionado no histograma.")),
+                                        dcc.Markdown(("#### Mapa de Hexágonos Selecionados:\n"
+                                                      "- Este mapa mostra os hexágonos que têm um número de **novas** salas necessárias dentro do intervalo selecionado.\n"
+                                                      "- Os hexágonos são filtrados com base no intervalo selecionado ao lado.")),
                                         dcc.Graph(id="filtered-map-graph"),
                                     ],
                                     width=6,
@@ -522,20 +552,20 @@ def calculate_table(selected_municipality):
 def update_columns(timestamp, rows):
     
     main_table = pd.DataFrame(rows)
-    main_table.set_index("index", inplace=True)
+    main_table.set_index(main_table.columns[0], inplace=True)
      
     main_table = main_table[[education_levels_short_labels[level] for level in education_levels]].astype(float)
 
-    main_table.loc["Total de Crianças"] = main_table.loc["Total Alunos Atualmente"] * (1 + main_table.loc["Integral (%)"]) * (1 - main_table.loc["Nocturno (%)"])
+    main_table.loc["Número Total de Vagas Necessárias"] = main_table.loc["Número Total de Alunos Matriculados"] * (1 + main_table.loc["% Alunos em Tempo Integral Matriculados"]) * (1 - main_table.loc["% Alunos de período Noturno"])
 
     # Calculate the number of classrooms needed based on the user defined number of chairs per classroom
 
     # Number of classrooms needed in total
-    main_table.loc["Num. Salas Necessárias"] = np.ceil(main_table.loc["Total de Crianças"] / main_table.loc["Total de Crianças por Sala"])
+    main_table.loc["Número de Salas Necessárias"] = np.ceil(main_table.loc["Número Total de Vagas Necessárias"] / main_table.loc["Número Total de Vagas por Sala"])
 
     # Number of classrooms needed in each level
-    main_table.loc["Num. Salas Necessárias Extra"] = np.ceil(
-        np.maximum(main_table.loc["Num. Salas Necessárias"] - main_table.loc["Num. Salas Atuais"], 0)
+    main_table.loc["Número de Novas Salas Necessárias"] = np.ceil(
+        np.maximum(main_table.loc["Número de Salas Necessárias"] - main_table.loc["Número de Salas Existentes"], 0)
     )
 
     main_table.reset_index(inplace=True)
@@ -584,7 +614,7 @@ def update_map(selected_municipality, selected_variables, hex_res, timestamp, va
     muni_hexagons = calculate_extra_salas(selected_municipality, selected_variables, rows, hex_res)
 
     # Create the map figure
-    muni_hexagons["hover_name"] = "Salas Necessárias Extra" # Hover title
+    muni_hexagons["hover_name"] = "Novas Salas Necessárias" # Hover title
     map_figure = px.choropleth_mapbox(
         muni_hexagons,
         geojson=muni_hexagons.geometry.__geo_interface__,
@@ -596,7 +626,7 @@ def update_map(selected_municipality, selected_variables, hex_res, timestamp, va
         hover_data={f"QT_SALAS_NECESARIAS_EXTRA_{level}": True for level in education_levels} | {"SalasNecessariasAcum": False},
         # hover_data={var : True for var in selected_variables},
         mapbox_style="carto-positron",
-        labels={f"QT_SALAS_NECESARIAS_EXTRA_{level}": education_levels_labels[level] for level in education_levels} | {"SalasNecessariasAcum": "Salas Necessárias Extra"},
+        labels={f"QT_SALAS_NECESARIAS_EXTRA_{level}": education_levels_labels[level] for level in education_levels} | {"SalasNecessariasAcum": "Novas Salas Necessárias"},
         # labels={var: education_levels_labels[var] for var in selected_variables} | {"SalasNecessariasAcum": "Salas Necessárias Extra"},
         zoom=8 if selected_municipality else 4,
         center={
@@ -635,7 +665,7 @@ def update_histogram_and_slider(jsonified_data, value_range):
         x="SalasNecessariasAcum",
         nbins=50,
         title=None,
-        labels={"SalasNecessariasAcum": "Salas Necessárias Extra", "count": "Número de Hexágonos"},
+        labels={"SalasNecessariasAcum": "Novas Salas Necessárias", "count": "Número de Hexágonos"},
         # Set opacity to 50%
         opacity=0.5,
     )
@@ -663,7 +693,7 @@ def update_histogram_and_slider(jsonified_data, value_range):
 
     # Turn of the axis titles
     histogram_figure.update_yaxes(title="Número de Hexágonos", showticklabels=True)                                         
-    histogram_figure.update_xaxes(title="Salas Necessárias Extra", showticklabels=True)
+    histogram_figure.update_xaxes(title="Novas Salas Necessárias", showticklabels=True)
     
     
     return histogram_figure, min_value, max_value
@@ -697,7 +727,7 @@ def update_filtered_map(hist_map, hex_size, jsonified_data, value_range, selecte
 
     # MAP WITH SELECTED HEXAGONS
     # Create the map figure
-    filtered_df["hover_name"] = "Salas Necessárias Extra" # Hover title
+    filtered_df["hover_name"] = "Novas Salas Necessárias" # Hover title
     filtered_map_figure = px.choropleth_mapbox(
         filtered_df,
         geojson=filtered_df.geometry.__geo_interface__,
@@ -709,7 +739,7 @@ def update_filtered_map(hist_map, hex_size, jsonified_data, value_range, selecte
         hover_data={f"QT_SALAS_NECESARIAS_EXTRA_{level}": True for level in education_levels} | {"SalasNecessariasAcum": False},
         # hover_data={var : True for var in selected_variables},
         mapbox_style="carto-positron",
-        labels={f"QT_SALAS_NECESARIAS_EXTRA_{level}": education_levels_labels[level] for level in education_levels} | {"SalasNecessariasAcum": "Salas Necessárias Extra"},
+        labels={f"QT_SALAS_NECESARIAS_EXTRA_{level}": education_levels_labels[level] for level in education_levels} | {"SalasNecessariasAcum": "Novas Salas Necessárias"},
         # labels={var: education_levels_labels[var] for var in selected_variables} | {"SalasNecessariasAcum": "Salas Necessárias Extra"},
         zoom= 8 if selected_municipality else 4,
         center={
@@ -726,7 +756,7 @@ def update_filtered_map(hist_map, hex_size, jsonified_data, value_range, selecte
     return filtered_map_figure
 
 # callback for showing a spinner within dbc.Button()
-import json
+
 app.clientside_callback(
     """
     function (click) {
@@ -821,7 +851,7 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
 
     # MAP WITH SELECTED HEXAGONS
     # Create the map figure
-    filtered_df["hover_name"] = "Salas Necessárias Extra" # Hover title
+    filtered_df["hover_name"] = "Novas Salas Necessárias" # Hover title
     map_figure = px.choropleth_mapbox(
         filtered_df,
         geojson=filtered_df.geometry.__geo_interface__,
@@ -833,7 +863,7 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
         hover_data={f"QT_SALAS_NECESARIAS_EXTRA_{level}": True for level in education_levels} | {"SalasNecessariasAcum": False},
         # hover_data={var : True for var in selected_variables},
         mapbox_style="carto-positron",
-        labels={f"QT_SALAS_NECESARIAS_EXTRA_{level}": education_levels_labels[level] for level in education_levels} | {"SalasNecessariasAcum": "Salas Necessárias Extra"},
+        labels={f"QT_SALAS_NECESARIAS_EXTRA_{level}": education_levels_labels[level] for level in education_levels} | {"SalasNecessariasAcum": "Novas Salas Necessárias"},
         # labels={var: education_levels_labels[var] for var in selected_variables} | {"SalasNecessariasAcum": "Salas Necessárias Extra"},
         zoom=8,
         center={
@@ -879,7 +909,7 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
 
         # Get the address for each hexagon
         hexagon_addresses = hexagon_latlon_coords.apply(nominatim_reverse_geocode)
-        print("HEXAGON ADDREESS EXAMPLE", hexagon_addresses.iloc[0])
+        # print("HEXAGON ADDREESS EXAMPLE", hexagon_addresses.iloc[0])
         # "road": "Travessa S 1",
         # "suburb": "Campina de Icoaraci",
         # "city_district": "Icoaraci",
@@ -932,7 +962,7 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
 
         # Replace the hexagon column names
         # Extend a dict with another dict: {**dict1, **dict2}
-        column_labels = {**COLUMN_LABELS, **{f"hex_{hex_size}": "Id do Hexágono"}}
+        column_labels = {**COLUMN_LABELS, **{f"hex_{hex_size}": ["    ", "Id do Hexágono"]}}
 
         return dash_table.DataTable(
             id="hexagon-table",
@@ -940,6 +970,7 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
                 {"name": label, "id": col} for col, label in column_labels.items()
             ],
             data=df[column_labels.keys()].to_dict("records"),
+            merge_duplicate_headers=True,
             fixed_columns={'headers': True, 'data': 1},
             style_table={'overflowX': 'auto', 'minWidth': '100%'},
             style_cell={
@@ -974,6 +1005,9 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
                 "backgroundColor": "rgb(210, 210, 210)",
                 "color": "black",
                 "fontWeight": "bold",
+                "textAlign": "center",
+                # LINES BLACK
+                "border": "1px solid black"
             },
         )
 
@@ -1039,53 +1073,31 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
             selected_columns = [f"QT_SALAS_NECESARIAS_EXTRA_{level}" for level in education_levels+["TOTAL"]] + ["short_address", "city_state"]
             filtered_row_df = row_df.loc[row_df["Variável"].isin(selected_columns)]
 
-            column_labels = {**COLUMN_LABELS, **{f"hex_{hex_size}": "Id do Hexágono"}}
+            column_labels = {**COLUMN_LABELS, **{f"hex_{hex_size}": ["", "Id do Hexágono"]}}
+            column_labels_simplified = {key: value[1] for key, value in column_labels.items()}
             
-            ordered_index = [value for key, value in column_labels.items() if key in filtered_row_df["Variável"].unique()]
+            ordered_index = [value for key, value in column_labels_simplified.items() if key in filtered_row_df["Variável"].unique()]
 
-            filtered_row_df["Variável"] = filtered_row_df["Variável"].map(column_labels)
+            filtered_row_df["Variável"] = filtered_row_df["Variável"].map(column_labels_simplified)
 
             filtered_row_df = filtered_row_df.set_index("Variável")
             
             filtered_row_df = filtered_row_df.loc[ordered_index]
 
-            # row_info_dashtable = dash_table.DataTable(
-            #     data=row_df.to_dict("records"),
-            #     columns=[
-            #         {"name": "Variable", "id": "VariableLabel"},
-            #         {"name": "Value", "id": "Value"},
-            #     ],
-            #     style_data={
-            #         'color': 'black',
-            #         'backgroundColor': 'white',
-            #     },
-            #     style_header={
-            #         'backgroundColor': 'rgb(210, 210, 210)',
-            #         'color': 'black',
-            #         'fontWeight': 'bold'
-            #     },
-            #     # Make the first column with the same style as the header
-            #     style_cell_conditional=[
-            #         {
-            #             'if': {'column_id': 'Variable'},
-            #             'fontWeight': 'bold',
-            #             'backgroundColor': 'rgb(210, 210, 210)',
-            #             'color': 'black',
-            #         }
-            #     ]
-            # )
 
-            # row_info_table_as_markdown = dcc.Markdown(filtered_row_df.to_markdown())
+            print(filtered_row_df)
 
-            table_header = [
-                html.Thead(html.Tr([html.Th("Variável"), html.Th("Valor")]))
-            ]
+            location_info = dcc.Markdown(f"""                            
+            ### Ubicación
+            **Endereço**: {filtered_row_df.loc["Endereço", "Valor"]}  
+            **Cidade**: {filtered_row_df.loc["Cidade", "Valor"]}
+            """)
 
             table_rows = []
             print("filtered_row_df ocls", filtered_row_df.columns)
-            for i, trow in filtered_row_df.iterrows():
+            for i, trow in filtered_row_df.iloc[2:].iterrows():
                 # Check if the education level is in the selected levels
-                if i in [COLUMN_LABELS[level] for level in selected_education_levels]:
+                if i in [COLUMN_LABELS[level][1] for level in selected_education_levels]:
                     
                     table_rows.append(html.Tr([html.Td(dbc.Badge(i, color="warning", className="me-1")), html.Td(dbc.Badge(trow.values[0], color="warning", className="me-1"))]))
                 else:
@@ -1093,14 +1105,14 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
 
             table_body = [html.Tbody(table_rows)]
 
-            table = dbc.Table(table_header + table_body, bordered=True)
+            table = dbc.Table(table_body, bordered=True)
 
             # Create a card with the hexagon map and the actual and necessary classrooms
             hexagon_details_card = dbc.Card(
                 [
                     dbc.CardHeader(
                         [
-                            "Id do Hexágono: ",
+                            "#: ",
                             # Open the h3geo.org website with the hexagon index on a new tab https://h3geo.org/#hex={row.values[0]}
                             html.A(row["#"], href=f"https://h3geo.org/#hex={row.values[0]}", target="_blank"),
                         ]
@@ -1110,7 +1122,13 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
                             dbc.Row(
                                 [
                                     dbc.Col(dcc.Graph(figure=hexagon_map)),
-                                    dbc.Col(table),
+                                    dbc.Col([
+                                        dbc.Row([location_info]),
+                                        dbc.Row([
+                                            dcc.Markdown("### Número de Novas Salas Necessárias"),
+                                            table
+                                        ]),
+                                    ]),
                                     # dbc.Col([row_info_table_as_markdown]),
                                     # dbc.Col(html.Div(row_info_dashtable)),
                                 ]
@@ -1142,7 +1160,7 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
         dcc.Markdown(f'''
         
         - **Região selecionada**: {regiao_selectionada_text}
-        - **Níveis de Ensino Selecionados**: {", ".join([COLUMN_LABELS[level] for level in selected_education_levels])}
+        - **Níveis de Ensino Selecionados**: {", ".join([COLUMN_LABELS[level][1] for level in selected_education_levels])}
         - **Tamanho do hexágono selecionado**: 
             - **Área**: {H3HEX_RESOLUTIONS[hex_size]['area']} km²
             - **Descrição**: {H3HEX_RESOLUTIONS[hex_size]['analogy']}. {H3HEX_RESOLUTIONS[hex_size]['description']}
