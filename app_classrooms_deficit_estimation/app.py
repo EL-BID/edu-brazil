@@ -271,7 +271,6 @@ app_header = dbc.Row(
         dbc.Col(
             [
                 html.Br(),
-                # Title in portuguese
                 html.H2("Dashboard | Gestão de Expansão Escolar: Análise de Necessidades de Salas de Aula"),
                 html.Br(),
                 dbc.Alert(
@@ -305,6 +304,7 @@ app_header = dbc.Row(
 
 app_control_panel = [
     html.Br(),
+    # State and municipality dropdowns
     dbc.Row(
             [
                 dbc.Col(
@@ -315,11 +315,10 @@ app_control_panel = [
                                 {"label": "Pará", "value": "PA"},
                                 {"label": "Acre", "value": "AC"},
                                 {"label": "Amazonas", "value": "AM"},
-                                # Add more options for other states
+                                # TODO: Add more options for other states
                             ],
                             value="PA",
                             disabled=True,
-                            # Add bottom margin to the dropdown
                             style={"margin-bottom": "20px"},
                         ),
                         dcc.Dropdown(
@@ -337,6 +336,7 @@ app_control_panel = [
             ],
             style={"margin-bottom": "20px"},
         ),
+    # Editable Table with the calculated values
     dbc.Row(
             [
                 dbc.Col(
@@ -388,7 +388,8 @@ app_control_panel = [
                     style={"margin-bottom": "20px"},
                 ),
             ]
-        ),
+        ),    
+    # Report settings
     dbc.Row(
             [
                 dbc.Col(
@@ -453,21 +454,31 @@ app_control_panel = [
                                             "- **Controle Deslizante:** Arraste as extremidades do controle deslizante abaixo do gráfico para definir o intervalo desejado de novas salas dos hexágonos a serem destacados.\n"
                                             "- **Barras:** Mostram a quantidade de hexágonos que precisam de **novas** salas dentro do intervalo selecionado."
                                         )),
-                                        dcc.Graph(id="histogram-graph"),
-                                        html.Br(),
-                                        dcc.RangeSlider(
-                                            id="value-range-slider",
-                                            min=0,  # Adjust based on your data
-                                            max=100,  # Adjust based on your data
-                                            step=1,
-                                            value=[10, 25],  # Initial range
-                                            marks={
-                                                i: {
-                                                    "label": str(i), 
-                                                    "style": {"font-size": "1.2em"},
-                                                } for i in range(0, 101, 5)
-                                            },
-                                            tooltip={"placement": "bottom"},
+                                        html.Div(
+                                            [
+                                                dcc.Graph(id="histogram-graph", style={"width": "100%", "margin-bottom": "0px"}),
+                                                html.Div(dcc.RangeSlider(
+                                                    id="value-range-slider",
+                                                    min=0,  # Adjust based on your data
+                                                    max=100,  # Adjust based on your data
+                                                    step=1,
+                                                    value=[10, 25],  # Initial range
+                                                    # marks={
+                                                    #     i: {
+                                                    #         "label": str(i), 
+                                                    #         "style": {"font-size": "1.2em"},
+                                                    #     } for i in range(0, 101, 5)
+                                                    # },
+                                                    tooltip={"placement": "bottom"},
+                                                ),
+                                                style={"width": "100%", "margin-top": "0px", "margin-left": "10px", "margin-right": "0px"}
+                                                ),
+                                                dcc.Markdown(
+                                                    "Número de Novas Salas Necessárias", 
+                                                    # Center the text horizontally
+                                                    style={"width": "100%", "display": "inline-block", "text-align": "center"})
+                                            ],
+                                            style={"width": "100%", "display": "inline-block"}
                                         ),
                                     ],
                                     width=6,
@@ -641,7 +652,12 @@ def update_map(selected_municipality, selected_variables, hex_res, timestamp, va
     return map_figure, muni_hexagons.drop(columns=["geometry"]).to_json(date_format='iso', orient='split')
 
 @app.callback(
-    [Output("histogram-graph", "figure"), Output("value-range-slider", "min"), Output("value-range-slider", "max")],
+    [
+        Output("histogram-graph", "figure"), 
+        Output("value-range-slider", "min"), 
+        Output("value-range-slider", "max"),
+        Output("value-range-slider", "marks"),
+    ],
     [
         Input("map-data-store", "data"),
         Input("value-range-slider", "value"),
@@ -657,6 +673,13 @@ def update_histogram_and_slider(jsonified_data, value_range):
     # Update the range slider min and max based on the DataFrame
     min_value = 0 # df["SalasNecessariasAcum"].min()
     max_value = df["SalasNecessariasAcum"].max()
+    marks_step = max_value // 10
+    marks = {
+        i: {
+            "label": str(i), 
+            "style": {"font-size": "1.2em"},
+        } for i in range(0, max_value + 1, marks_step)
+    }
 
     # Create the histogram figure
     print("DF shape", df.shape)
@@ -665,7 +688,8 @@ def update_histogram_and_slider(jsonified_data, value_range):
         x="SalasNecessariasAcum",
         nbins=50,
         title=None,
-        labels={"SalasNecessariasAcum": "Novas Salas Necessárias", "count": "Número de Hexágonos"},
+        # labels={"SalasNecessariasAcum": "Novas Salas Necessárias", "count": "Número de Hexágonos"},
+        labels={"count": "Número de Hexágonos"},
         # Set opacity to 50%
         opacity=0.5,
     )
@@ -688,15 +712,22 @@ def update_histogram_and_slider(jsonified_data, value_range):
     # The histogram should be on top of the original histogram not stacked
     histogram_figure.update_layout(
         barmode='overlay',
-        margin=dict(l=25, r=25, b=0, t=0)
+        margin=dict(l=0, r=15, b=0, t=0),
+        xaxis=dict(range=[min_value, max_value])
     )
 
     # Turn of the axis titles
     histogram_figure.update_yaxes(title="Número de Hexágonos", showticklabels=True)                                         
-    histogram_figure.update_xaxes(title="Novas Salas Necessárias", showticklabels=True)
+    histogram_figure.update_xaxes(
+        # title="Novas Salas Necessárias", 
+        title=None,
+        showticklabels=False,
+        tickmode="array",
+        tickvals=list(marks.keys()),
+    )
     
     
-    return histogram_figure, min_value, max_value
+    return histogram_figure, min_value, max_value, marks
 
 
 @app.callback(
