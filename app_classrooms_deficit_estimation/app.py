@@ -116,10 +116,10 @@ def calculate_table_data(name_muni=None):
     # total number of students on each level
     main_table.append(filtered_hexs[[f'QT_MAT_{level}' for level in education_levels]].sum().values.tolist())
     # percentage of students in integral time (Tempo Integral)
-    main_table.append([filtered_hexs[f"QT_MAT_{level}_INT"].sum() / filtered_hexs[f"QT_MAT_{level}"].sum() for level in education_levels])
+    main_table.append([100 * (filtered_hexs[f"QT_MAT_{level}_INT"].sum() / filtered_hexs[f"QT_MAT_{level}"].sum()) for level in education_levels])
     # percentage of students in nocturnal time (Tempo Noturno)
     main_table.append([
-        (filtered_hexs["QT_MAT_BAS_N"] * filtered_hexs[f"QT_MAT_{level}_PROP"]).sum() / filtered_hexs[f"QT_MAT_{level}"].sum()
+        100 * ((filtered_hexs["QT_MAT_BAS_N"] * filtered_hexs[f"QT_MAT_{level}_PROP"]).sum() / filtered_hexs[f"QT_MAT_{level}"].sum())
         if level not in ["INF_CRE", "INF_PRE", "FUND_AI"] else 0 
         for level in education_levels 
     ])
@@ -127,11 +127,11 @@ def calculate_table_data(name_muni=None):
     total_places = []
     for i, level in enumerate(education_levels):
         # total number of students * (1 + percentage of students in integral time) * (1 - percentage of students in nocturnal time)
-        num_cadeiras = main_table[0][i] * (1 + main_table[1][i]) * (1 - main_table[2][i])
+        num_cadeiras = main_table[0][i] * (1 + main_table[1][i] / 100) * (1 - main_table[2][i] / 100)
         total_places.append(num_cadeiras)
     main_table.append(total_places)
 
-    main_table = pd.DataFrame(main_table, columns=education_levels, index=["Número Total de Alunos Matriculados", "% Alunos em Tempo Integral Matriculados", "% Alunos de período Noturno", "Número Total de Vagas Necessárias"]) 
+    main_table = pd.DataFrame(main_table, columns=education_levels, index=["Número Total de Alunos Matriculados", "Porcentagem de Alunos em Tempo Integral (%)", "Porcentagem de Alunos em Período Noturno (%)", "Número Total de Vagas Necessárias"]) 
 
     # Calculate the number of classrooms needed based on the user defined number of chairs per classroom
 
@@ -191,7 +191,7 @@ def calculate_extra_salas(name_muni, selected_variables, rows, hex_res):
     for level in education_levels:
         prop_mat = muni_hexagons[f"QT_MAT_{level}"] / muni_hexagons[f"QT_MAT_{level}"].sum() # proportion of students in each hexagon
         total_qt_alumnos = prop_mat * main_table.loc["Número Total de Alunos Matriculados", level] # number of students in each hexagon
-        qt_cadeiras = total_qt_alumnos * (1 + main_table.loc["% Alunos em Tempo Integral Matriculados", level]) * (1 - main_table.loc["% Alunos de período Noturno", level]) # number of chairs needed in each hexagon
+        qt_cadeiras = total_qt_alumnos * (1 + main_table.loc["Porcentagem de Alunos em Tempo Integral (%)", level] / 100) * (1 - main_table.loc["Porcentagem de Alunos em Período Noturno (%)", level] / 100) # number of chairs needed in each hexagon
         muni_hexagons.loc[:, f"QT_SALAS_NECESARIAS_TOTAL_{level}"] = qt_cadeiras / main_table.loc["Número Total de Vagas por Sala", level] # number of classrooms needed in each hexagon
         muni_hexagons.loc[:, f"QT_SALAS_ACTUALES_{level}"] = (
             muni_hexagons["QT_SALAS_UTILIZADAS"] * muni_hexagons[f"QT_MAT_{level}_PROP"]
@@ -254,7 +254,7 @@ calculated_rows = [3,5,7]
 # Valor por default en portugues es "Valor padrão"
 # Create tooltips for user-defined rows
 tooltips = [
-    {column: {'value': f"*Valor padrão:* {row[column]}", 'type': 'markdown'} for column in initial_table_data.columns}
+    {column: {'value': f"*Valor padrão:* {round(row[column], 2) if type(row[column]) == float else row[column]}", 'type': 'markdown'} for column in initial_table_data.columns}
     if index in user_defined_rows 
     else {column: {'value': "Valor calculado", 'type': 'markdown'} for column in initial_table_data.columns}
     for index, row in initial_table_data.iterrows() 
@@ -344,7 +344,7 @@ app_control_panel = [
                         dash_table.DataTable(
                             id="computed-table",
                             columns=[
-                                {"name": i, "id": i, "type": "numeric", "format": Format(precision=2, scheme=Scheme.fixed)} 
+                                {"name": i, "id": i, "type": "numeric", "format": Format(precision=0, scheme=Scheme.fixed)} 
                                 if i != "index" else {"name": "", "id": i} 
                                 for i in initial_table_data.columns
                             ],
@@ -372,12 +372,6 @@ app_control_panel = [
                                     'if': {'row_index': calculated_rows, 'column_type': 'numeric'},
                                     'backgroundColor': 'rgb(230, 230, 255)',
                                     'fontWeight': 'bold'
-                                },
-                                {
-                                    'if': {'row_index': [1, 2], 'column_type': 'numeric'},
-                                    # 
-
-                                    
                                 }
                             ],
                         ),
@@ -454,32 +448,6 @@ app_control_panel = [
                                             "- **Controle Deslizante:** Arraste as extremidades do controle deslizante abaixo do gráfico para definir o intervalo desejado de novas salas dos hexágonos a serem destacados.\n"
                                             "- **Barras:** Mostram a quantidade de hexágonos que precisam de **novas** salas dentro do intervalo selecionado."
                                         )),
-                                        html.Div(
-                                            [
-                                                dcc.Graph(id="histogram-graph", style={"width": "100%", "margin-bottom": "0px"}),
-                                                html.Div(dcc.RangeSlider(
-                                                    id="value-range-slider",
-                                                    min=0,  # Adjust based on your data
-                                                    max=100,  # Adjust based on your data
-                                                    step=1,
-                                                    value=[10, 25],  # Initial range
-                                                    # marks={
-                                                    #     i: {
-                                                    #         "label": str(i), 
-                                                    #         "style": {"font-size": "1.2em"},
-                                                    #     } for i in range(0, 101, 5)
-                                                    # },
-                                                    tooltip={"placement": "bottom"},
-                                                ),
-                                                style={"width": "100%", "margin-top": "0px", "margin-left": "10px", "margin-right": "0px"}
-                                                ),
-                                                dcc.Markdown(
-                                                    "Número de Novas Salas Necessárias", 
-                                                    # Center the text horizontally
-                                                    style={"width": "100%", "display": "inline-block", "text-align": "center"})
-                                            ],
-                                            style={"width": "100%", "display": "inline-block"}
-                                        ),
                                     ],
                                     width=6,
                                 ),
@@ -488,12 +456,40 @@ app_control_panel = [
                                         dcc.Markdown(("#### Mapa de Hexágonos Selecionados:\n"
                                                       "- Este mapa mostra os hexágonos que têm um número de **novas** salas necessárias dentro do intervalo selecionado.\n"
                                                       "- Os hexágonos são filtrados com base no intervalo selecionado ao lado.")),
-                                        dcc.Graph(id="filtered-map-graph"),
                                     ],
                                     width=6,
                                 )
                             ]
                         ),
+                        dbc.Row([
+                            dbc.Col(
+                                html.Div([
+                                    dcc.Graph(id="histogram-graph", style={"width": "100%", "margin-bottom": "0px"}),
+                                    html.Div(dcc.RangeSlider(
+                                        id="value-range-slider",
+                                        min=0,  # Adjust based on your data
+                                        max=100,  # Adjust based on your data
+                                        step=1,
+                                        value=[10, 25],  # Initial range
+                                        # marks={
+                                        #     i: {
+                                        #         "label": str(i), 
+                                        #         "style": {"font-size": "1.2em"},
+                                        #     } for i in range(0, 101, 5)
+                                        # },
+                                        tooltip={"placement": "bottom"},
+                                    ),
+                                    style={"width": "100%", "margin-top": "0px", "margin-left": "10px", "margin-right": "0px"}
+                                    ),
+                                    dcc.Markdown(
+                                        "Número de Novas Salas Necessárias", 
+                                        # Center the text horizontally
+                                        style={"width": "100%", "display": "inline-block", "text-align": "center"})
+                                ], style={"width": "100%", "display": "inline-block"}
+                            ), width=6),
+                            dbc.Col(dcc.Graph(id="filtered-map-graph"), width=6),
+                        ]),
+
                         html.Hr(),
                         # Center the button
                         html.Div(
@@ -567,7 +563,7 @@ def update_columns(timestamp, rows):
      
     main_table = main_table[[education_levels_short_labels[level] for level in education_levels]].astype(float)
 
-    main_table.loc["Número Total de Vagas Necessárias"] = main_table.loc["Número Total de Alunos Matriculados"] * (1 + main_table.loc["% Alunos em Tempo Integral Matriculados"]) * (1 - main_table.loc["% Alunos de período Noturno"])
+    main_table.loc["Número Total de Vagas Necessárias"] = main_table.loc["Número Total de Alunos Matriculados"] * (1 + main_table.loc["Porcentagem de Alunos em Tempo Integral (%)"] / 100) * (1 - main_table.loc["Porcentagem de Alunos em Período Noturno (%)"] / 100)
 
     # Calculate the number of classrooms needed based on the user defined number of chairs per classroom
 
@@ -849,7 +845,7 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
                 "name": i, 
                 "id": i, 
                 "type": "numeric", 
-                "format": Format(precision=2, scheme=Scheme.fixed)
+                "format": Format(precision=0, scheme=Scheme.fixed)
             } if i != "index" else {
                 "name": i, 
                 "id": i
@@ -1119,7 +1115,7 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
             print(filtered_row_df)
 
             location_info = dcc.Markdown(f"""                            
-            ### Ubicación
+            ### Localização
             **Endereço**: {filtered_row_df.loc["Endereço", "Valor"]}  
             **Cidade**: {filtered_row_df.loc["Cidade", "Valor"]}
             """)
