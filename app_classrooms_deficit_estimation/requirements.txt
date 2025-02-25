@@ -67,6 +67,8 @@ markupsafe==3.0.2
     #   werkzeug
 matplotlib==3.9.2
     # via descartes
+narwhals==1.28.0
+    # via plotly
 nest-asyncio==1.6.0
     # via dash
 networkx==3.4.2
@@ -98,8 +100,9 @@ pandas==2.2.3
     #   osmnx
 pillow==11.0.0
     # via matplotlib
-plotly==5.18.0
+plotly==6.0.0
     # via
+    #   app-classrooms-deficit-estimation (pyproject.toml)
     #   dash
     #   urbanpy
 pyarrow==18.0.0
@@ -140,8 +143,6 @@ six==1.16.0
     # via
     #   python-dateutil
     #   retrying
-tenacity==9.0.0
-    # via plotly
 threadpoolctl==3.5.0
     # via scikit-learn
 tqdm==4.66.6
