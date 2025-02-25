@@ -36,14 +36,13 @@ required_columns = [
     ## NEW PRIVATE SCHOOL VARIABLES ##
     "PRIVATE_QT_MAT_INF_CRE", "PRIVATE_QT_MAT_INF_PRE", "PRIVATE_QT_MAT_FUND_AF", "PRIVATE_QT_MAT_FUND_AI", "PRIVATE_QT_MAT_MED",
     ## NEW PRIVATE SCHOOL VARIABLES ##
-    "hex", "geometry"
+    "hex", 
+    # "geometry"
 ]
 
-hex_gdf = pd.concat([
-    gpd.read_parquet("data/25022025_dashboard_hexs_part1.parquet", columns=required_columns),
-    gpd.read_parquet("data/25022025_dashboard_hexs_part2.parquet", columns=required_columns),
-    gpd.read_parquet("data/25022025_dashboard_hexs_part3.parquet", columns=required_columns)
-])
+hex_df = pd.read_parquet("data/25022025_dashboard_hexs_light.parquet", columns=required_columns)
+h3_geom = hex_df["hex"].apply(lambda x: Polygon(h3.h3_to_geo_boundary(x, geo_json=True)))
+hex_gdf = gpd.GeoDataFrame(hex_df, geometry=h3_geom, crs="EPSG:4326")
 
 # Replace "pop_3_months_3_years" with  "pop_INF_CRE"
 hex_gdf = hex_gdf.rename(columns={
