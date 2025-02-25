@@ -1,5 +1,5 @@
-
 import json
+import time
 import dash
 from dash import dcc, html, Input, Output, dash_table, State
 from dash.exceptions import PreventUpdate
@@ -12,6 +12,10 @@ import geopandas as gpd
 import urbanpy as up
 import h3
 from shapely.geometry import Polygon
+import dash_leaflet as dl
+
+INITIAL_MUNICIPALITY = None
+MIN_HEX_SIZE_AT_STATE_LEVEL = 6
 
 # Load and preprocess the data
 para_muni = gpd.read_file("data/para_muni.geojson")
@@ -19,14 +23,36 @@ para_muni = gpd.read_file("data/para_muni.geojson")
 # Read only required columns to save memory
 required_columns = [
     "name_muni",
+    "pop_3_months_3_years_adj", # INF_CRE
+    "pop_4_5_years_adj", # INF_PRE
+    "pop_6_10_years_adj", # FUND_AI
+    "pop_11_14_years_adj", # FUND_AF
+    "pop_15_17_years_adj", # MED
     "QT_MAT_INF_CRE", "QT_MAT_INF_PRE", "QT_MAT_FUND_AI", "QT_MAT_FUND_AF", "QT_MAT_MED",
     "QT_MAT_INF_CRE_INT", "QT_MAT_INF_PRE_INT", "QT_MAT_FUND_AI_INT", "QT_MAT_FUND_AF_INT", "QT_MAT_MED_INT",
     "QT_MAT_INF_CRE_PROP", "QT_MAT_INF_PRE_PROP", "QT_MAT_FUND_AI_PROP", "QT_MAT_FUND_AF_PROP", "QT_MAT_MED_PROP",
     "QT_MAT_BAS_N",
     "QT_SALAS_UTILIZADAS",
-    "hex"
+    ## NEW PRIVATE SCHOOL VARIABLES ##
+    "PRIVATE_QT_MAT_INF_CRE", "PRIVATE_QT_MAT_INF_PRE", "PRIVATE_QT_MAT_FUND_AF", "PRIVATE_QT_MAT_FUND_AI", "PRIVATE_QT_MAT_MED",
+    ## NEW PRIVATE SCHOOL VARIABLES ##
+    "hex", "geometry"
 ]
-hex_gdf = pd.read_parquet("data/180724_dashboard_hexs.parquet", columns=required_columns)
+
+hex_gdf = pd.concat([
+    gpd.read_parquet("data/25022025_dashboard_hexs_part1.parquet", columns=required_columns),
+    gpd.read_parquet("data/25022025_dashboard_hexs_part2.parquet", columns=required_columns),
+    gpd.read_parquet("data/25022025_dashboard_hexs_part3.parquet", columns=required_columns)
+])
+
+# Replace "pop_3_months_3_years" with  "pop_INF_CRE"
+hex_gdf = hex_gdf.rename(columns={
+    "pop_3_months_3_years_adj": "pop_INF_CRE",
+    "pop_4_5_years_adj": "pop_INF_PRE",
+    "pop_6_10_years_adj": "pop_FUND_AI",
+    "pop_11_14_years_adj": "pop_FUND_AF",
+    "pop_15_17_years_adj": "pop_MED",
+})
 
 education_levels = ["INF_CRE", "INF_PRE", "FUND_AI", "FUND_AF", "MED"]
 education_levels_labels = {
@@ -58,7 +84,7 @@ COLUMN_LABELS = {
     'QT_SALAS_NECESARIAS_EXTRA_MED': ["Número de Novas Salas Necessárias", "Ensino Médio"],
 }
 
-#  Here’s a table that combines the resolution, average hexagon area in km², a relatable analogy, and a simple comparative description:
+#  Here's a table that combines the resolution, average hexagon area in km², a relatable analogy, and a simple comparative description:
 
 # | **Resolution** | **Area (km²)** | **Analogy**                            | **Comparative Description**                                         |
 # |----------------|----------------|----------------------------------------|---------------------------------------------------------------------|
@@ -106,15 +132,60 @@ slider_marks = {
 
 def calculate_table_data(name_muni=None):
 
-    if "name_muni" in hex_gdf.columns and name_muni:
+    if name_muni and "name_muni" in hex_gdf.columns:
+        print("Selected municipality:", name_muni)
         filtered_hexs = hex_gdf[hex_gdf["name_muni"] == name_muni]
     else:
-        filtered_hexs = hex_gdf
+        print("No municipality selected")
+        filtered_hexs = hex_gdf.copy()
+    
+    print("1. Filtered hexs shape", filtered_hexs.shape)
         
     # Calculate defaults for the table
     main_table = []
+
+    ### NEW VARIABLES WITH ESTIMATED POP & STUDENTS IN PRIVATE SCHOOL ### 
+
+    # A - population on each level 
+    pop_per_level = filtered_hexs[[f'pop_{level}' for level in education_levels]].sum().round(0).values.tolist()
+    main_table.append(pop_per_level)
+
+    # A1 - % population outside of school
+    pop_not_in_school_per_level = []
+    for level in education_levels:
+        pop_not_in_school = 1 - (filtered_hexs[f"QT_MAT_{level}"].sum() / filtered_hexs[f'pop_{level}'].sum())
+        pop_not_in_school *= 100
+        pop_not_in_school_per_level.append(pop_not_in_school)
+    main_table.append(pop_not_in_school_per_level)
+    
+    # A2 - % students in private schoools
+    students_in_private_per_level = []
+    for level in education_levels:
+        # students_private_schools = 1 - (filtered_hexs[f"PRIVATE_QT_MAT_{level}"].sum() / filtered_hexs[f"QT_MAT_{level}"].sum())
+        students_private_schools = filtered_hexs[f"PRIVATE_QT_MAT_{level}"].sum() / filtered_hexs[f"pop_{level}"].sum()
+        students_private_schools *= 100
+        students_in_private_per_level.append(students_private_schools)
+    main_table.append(students_in_private_per_level)
+
+    # B - Total # of students in the public system (CALCULATED)
+    students_in_public_per_level = []
+    for i, level in enumerate(education_levels):
+        students_in_public_edu = pop_per_level[i] * (1 - (pop_not_in_school_per_level[i]/100) - (students_in_private_per_level[i]/100))
+        students_in_public_per_level.append(students_in_public_edu)
+    main_table.append(students_in_public_per_level)
+
+    # # C - Total # of students in the public system (CENSO)
+    # students_public = []
+    # for i, level in enumerate(education_levels):
+    #     students_public_value = filtered_hexs[f"QT_MAT_{level}"].sum() - filtered_hexs[f"PRIVATE_QT_MAT_{level}"].sum()
+    #     students_public.append(students_public_value)
+    # main_table.append(students_public)
+
+    ### NEW VARIABLES WITH ESTIMATED POP & STUDENTS IN PRIVATE SCHOOL ### 
+
     # total number of students on each level
-    main_table.append(filtered_hexs[[f'QT_MAT_{level}' for level in education_levels]].sum().values.tolist())
+    # main_table.append(filtered_hexs[[f'QT_MAT_{level}' for level in education_levels]].sum().values.tolist())
+
     # percentage of students in integral time (Tempo Integral)
     main_table.append([100 * (filtered_hexs[f"QT_MAT_{level}_INT"].sum() / filtered_hexs[f"QT_MAT_{level}"].sum()) for level in education_levels])
     # percentage of students in nocturnal time (Tempo Noturno)
@@ -125,13 +196,32 @@ def calculate_table_data(name_muni=None):
     ])
     # total number of places available
     total_places = []
+
+    # Row indexes
+    TOTAL_STUDENTS  = 3
+    PCT_STUDENTS_INT = 4
+    PCT_STUDENTS_NOC = 5
     for i, level in enumerate(education_levels):
         # total number of students * (1 + percentage of students in integral time) * (1 - percentage of students in nocturnal time)
-        num_cadeiras = main_table[0][i] * (1 + main_table[1][i] / 100) * (1 - main_table[2][i] / 100)
+        num_cadeiras = main_table[TOTAL_STUDENTS][i] * (1 + main_table[PCT_STUDENTS_INT][i] / 100) * (1 - main_table[PCT_STUDENTS_NOC][i] / 100)
         total_places.append(num_cadeiras)
     main_table.append(total_places)
 
-    main_table = pd.DataFrame(main_table, columns=education_levels, index=["Número Total de Alunos Matriculados", "Porcentagem de Alunos em Tempo Integral (%)", "Porcentagem de Alunos em Período Noturno (%)", "Número Total de Vagas Necessárias"]) 
+    main_table = pd.DataFrame(
+        data=main_table, 
+        columns=education_levels, 
+        index=[
+            "População Estimada",
+            "Porcentagem da População fora da Escola (%)",
+            "Porcentagem de Alunos em Escolas Privadas (%)",
+            "Número Total de Alunos em Escolas Publicas",
+            # "Número Total de Alunos Matriculados Escola Publica (CENSO)",
+            # "Número Total de Alunos Matriculados",
+            "Porcentagem de Alunos em Tempo Integral (%)", 
+            "Porcentagem de Alunos em Período Noturno (%)", 
+            "Número Total de Vagas Necessárias",
+        ]
+    ) 
 
     # Calculate the number of classrooms needed based on the user defined number of chairs per classroom
 
@@ -144,7 +234,6 @@ def calculate_table_data(name_muni=None):
     # Anos Finais do Ensino Fundamental/Middle School (11 to 14 years) - 40 students per classroom
     # Ensino Médio/High School (15 to 17 years) - 40 students per classroom
 
-    # education_levels = ["INF_CRE", "INF_PRE", "FUND_AI", "FUND_AF", "MED"]
     num_chairs = [15, 25, 35, 40, 40]
     main_table.loc["Número Total de Vagas por Sala"] = num_chairs
 
@@ -164,16 +253,18 @@ def calculate_table_data(name_muni=None):
     # Fix column names with education_levels_short_labels
     main_table.columns = [education_levels_short_labels[col] for col in main_table.columns]
 
-    return main_table
+    return main_table.round(2)
 
 
 def calculate_extra_salas(name_muni, selected_variables, rows, hex_res):
 
     # Visualize the results for the selected municipality
-    if "name_muni" in hex_gdf.columns and name_muni:
+    if name_muni and "name_muni" in hex_gdf.columns:
         muni_hexagons = hex_gdf[hex_gdf["name_muni"] == name_muni]
     else:
-        muni_hexagons = hex_gdf
+        muni_hexagons = hex_gdf.copy()
+        print("muni_hexagons", muni_hexagons.shape)
+        # muni_hexagons = gpd.GeoDataFrame(hex_gdf.drop(columns=["geometry"]).values, geometry=hex_gdf.geometry, crs="EPSG:4326")
 
     # Calculate the number of classrooms needed based on the user defined variables
     main_table = pd.DataFrame(rows)
@@ -189,13 +280,19 @@ def calculate_extra_salas(name_muni, selected_variables, rows, hex_res):
 
     print("Recalculating the number of classrooms needed based on the user defined variables on the table ... ", end="")
     for level in education_levels:
-        prop_mat = muni_hexagons[f"QT_MAT_{level}"] / muni_hexagons[f"QT_MAT_{level}"].sum() # proportion of students in each hexagon
-        total_qt_alumnos = prop_mat * main_table.loc["Número Total de Alunos Matriculados", level] # number of students in each hexagon
-        qt_cadeiras = total_qt_alumnos * (1 + main_table.loc["Porcentagem de Alunos em Tempo Integral (%)", level] / 100) * (1 - main_table.loc["Porcentagem de Alunos em Período Noturno (%)", level] / 100) # number of chairs needed in each hexagon
-        muni_hexagons.loc[:, f"QT_SALAS_NECESARIAS_TOTAL_{level}"] = qt_cadeiras / main_table.loc["Número Total de Vagas por Sala", level] # number of classrooms needed in each hexagon
+        # Calculate the proportion of students in each hexagon
+        prop_mat = muni_hexagons[f"QT_MAT_{level}"] / muni_hexagons[f"QT_MAT_{level}"].sum() 
+        # Calculate the total number of students in each hexagon
+        total_qt_alumnos = prop_mat * main_table.loc["Número Total de Alunos em Escolas Publicas", level] 
+        # Calculate the total number of chairs needed in each hexagon
+        qt_cadeiras = total_qt_alumnos * (1 + main_table.loc["Porcentagem de Alunos em Tempo Integral (%)", level] / 100) * (1 - main_table.loc["Porcentagem de Alunos em Período Noturno (%)", level] / 100) 
+        # Calculate the number of classrooms needed in each hexagon
+        muni_hexagons.loc[:, f"QT_SALAS_NECESARIAS_TOTAL_{level}"] = qt_cadeiras / main_table.loc["Número Total de Vagas por Sala", level] 
+        # Calculate the actual number of classrooms in each hexagon
         muni_hexagons.loc[:, f"QT_SALAS_ACTUALES_{level}"] = (
             muni_hexagons["QT_SALAS_UTILIZADAS"] * muni_hexagons[f"QT_MAT_{level}_PROP"]
         )
+        # Calculate the number of extra classrooms needed in each hexagon
         muni_hexagons.loc[:, f"QT_SALAS_NECESARIAS_EXTRA_{level}"] = np.ceil(
             np.maximum(
                 muni_hexagons[f"QT_SALAS_NECESARIAS_TOTAL_{level}"]
@@ -205,12 +302,19 @@ def calculate_extra_salas(name_muni, selected_variables, rows, hex_res):
         )
     print("Done")
 
+
+    print("SELECTED VARIABLES", selected_variables)
     if isinstance(selected_variables, str):
         selected_variables = [selected_variables]
 
+    print("CALCULATING THE SUM OF THE SELECTED VARIABLES")
+    print("muni_hexagons.shape", muni_hexagons.shape)
     muni_hexagons.loc[:, "SalasNecessariasAcum"] = muni_hexagons[selected_variables].sum(axis=1)
     muni_hexagons = muni_hexagons.dropna(subset=["SalasNecessariasAcum"])
+    print("dropna > muni_hexagons.shape", muni_hexagons.shape)
     muni_hexagons = muni_hexagons[muni_hexagons["SalasNecessariasAcum"] > 0]
+    print("> 0 -muni_hexagons.shape", muni_hexagons.shape)
+    print("Done")
 
     # Change the hexagon resolution based on the user input (hex_res)
 
@@ -237,28 +341,36 @@ def calculate_extra_salas(name_muni, selected_variables, rows, hex_res):
         dfc = muni_hexagons.groupby([coarse_hex_col]).agg(agg).reset_index()
         gdfc_geometry = dfc[coarse_hex_col].apply(lambda x: Polygon(h3.h3_to_geo_boundary(x, geo_json=True)))
         
-        muni_hexagons = gpd.GeoDataFrame(dfc, geometry=gdfc_geometry, crs="EPSG:4326")
+        muni_hexagons_coarse = gpd.GeoDataFrame(dfc, geometry=gdfc_geometry, crs="EPSG:4326")
+        print("Done")
 
+        return muni_hexagons_coarse
+
+    
     print("COLUMNS IN HEXAGON DATAFRAME", muni_hexagons.columns)
+
     if 'hex' in muni_hexagons.columns:
         # Replace 'hex' to f"hex_{hex_res}"
         muni_hexagons.rename(columns={"hex": f"hex_{hex_res}"}, inplace=True)
 
-    return muni_hexagons
+        return muni_hexagons
 
-initial_table_data = calculate_table_data("Belém")
+initial_table_data = calculate_table_data(INITIAL_MUNICIPALITY)
 
-user_defined_rows = [0,1,2,4,6]
-calculated_rows = [3,5,7]
+user_defined_rows = [1,2,4,5,7,9]
+calculated_rows = [0,3,6,8,10]
 
 # Valor por default en portugues es "Valor padrão"
 # Create tooltips for user-defined rows
-tooltips = [
-    {column: {'value': f"*Valor padrão:* {round(row[column], 2) if type(row[column]) == float else row[column]}", 'type': 'markdown'} for column in initial_table_data.columns}
-    if index in user_defined_rows 
-    else {column: {'value': "Valor calculado", 'type': 'markdown'} for column in initial_table_data.columns}
-    for index, row in initial_table_data.iterrows() 
-]
+
+def calculate_tooltips(table_data):
+    return [
+        {column: {'value': f"*Valor padrão:* {round(row[column], 2) if isinstance(row[column], float) else row[column]}", 'type': 'markdown'} 
+        for column in table_data.columns} if index in user_defined_rows 
+        else {column: {'value': "Valor calculado", 'type': 'markdown'} for column in table_data.columns}
+        for index, row in table_data.iterrows() 
+    ]
+initial_tooltips = calculate_tooltips(initial_table_data)
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
 
@@ -289,6 +401,8 @@ app_header = dbc.Row(
                         1. **Visualize o mapa:** O "Mapa de Salas Necessárias", com hexágonos, exibirá as áreas do município onde há maior necessidade de salas de aula, com base nas variáveis selecionadas e no nível de detalhe configurado.
                         
                         **Divirta-se explorando o painel e planeje de forma eficiente a expansão da infraestrutura educacional!**
+
+                        **Revise o método de cálculo no [link]([TODO: Add link to PDF on github])**
                     '''),
                     id="alert-fade",
                     dismissable=True,
@@ -327,7 +441,7 @@ app_control_panel = [
                                 {"label": muni, "value": muni}
                                 for muni in para_muni["name_muni"].unique()
                             ],
-                            value="Belém",
+                            value=INITIAL_MUNICIPALITY,
                             placeholder="Selecione um município",
                         ),
                     ],
@@ -338,9 +452,10 @@ app_control_panel = [
         ),
     # Editable Table with the calculated values
     dbc.Row(
-            [
-                dbc.Col(
-                    [
+        [
+            dbc.Col(
+                [
+                    dcc.Loading(
                         dash_table.DataTable(
                             id="computed-table",
                             columns=[
@@ -348,21 +463,39 @@ app_control_panel = [
                                 if i != "index" else {"name": "", "id": i} 
                                 for i in initial_table_data.columns
                             ],
-                            tooltip_data=tooltips,
+                            tooltip_data=initial_tooltips,
                             data=[
-                                {**row, **{'editable': False}} if index in calculated_rows else {**row, **{'editable': True}}
-                                for index, row in enumerate(initial_table_data.to_dict("records"))
+                                {**row, **{'editable': index in calculated_rows}} for index, row in enumerate(initial_table_data.to_dict("records"))
                             ],
                             editable=True,
+                            fixed_columns={'headers': True, 'data': 1},
+                            # css=[{'selector': 'table', 'rule': 'table-layout: fixed'}],
+                            # style_cell={
+                            #     'width': '{}%'.format(len(initial_table_data.columns)),
+                            #     'textOverflow': 'ellipsis',
+                            #     'overflow': 'hidden'
+                            # },
+                            style_table={
+                                'overflowX': 'auto', 
+                                'minWidth': '100%'
+                            },
                             style_data={
+                                # 'whiteSpace': 'normal',
+                                # 'height': 'auto',
                                 'color': 'black',
                                 'backgroundColor': 'white',
                             },
                             style_header={
                                 'backgroundColor': 'rgb(210, 210, 210)',
                                 'color': 'black',
-                                'fontWeight': 'bold'
+                                'fontWeight': 'bold',
                             },
+                            style_cell_conditional=[
+                                {'if': {'column_id': 'index'}, 'width': '10%'},
+                            ] + [
+                                {'if': {'column_id': col}, 'width': '8%'} 
+                                for col in initial_table_data.columns if col != "index"
+                            ],
                             style_data_conditional=[
                                 {
                                     'if': {'row_index': user_defined_rows, 'column_type': 'numeric'},
@@ -375,138 +508,202 @@ app_control_panel = [
                                 }
                             ],
                         ),
-                        # Add a button to reset the table to the initial values
-                        dbc.Button("Resetar Tabela", id="reset-table-button", color="primary", className="mr-1 mt-2 align-self-end"),
-                    ],
-                    width=12,
-                    style={"margin-bottom": "20px"},
-                ),
-            ]
-        ),    
+                        type="circle",
+                    ),
+                    dbc.Button("Resetar Tabela", id="reset-table-button", color="primary", className="mr-1 mt-2 align-self-end"),
+                ],
+                width=12,
+                style={"margin-bottom": "20px"},
+            ),
+        ]
+    ),    
     # Report settings
     dbc.Row(
-            [
-                dbc.Col(
-                    [
-                        html.H2("Configurações"),
-                        html.Hr(),
-                        html.H3("Selecione os níveis de ensino para analisar"),
-                        dcc.Markdown(("- Selecione os níveis de ensino que deseja visualizar no mapa.\n"
-                                      "- Os hexágonos no mapa mostrarão o número de **novas** salas necessárias para todos os níveis de ensino selecionados.\n"
-                                      "- O relatório será gerado com base nos níveis de ensino selecionados.")),
-                        dcc.Dropdown(
-                            id="map-variable-dropdown",
-                            options=[
-                                {"label": education_levels_labels[level], "value": f"QT_SALAS_NECESARIAS_EXTRA_{level}"}
-                                for level in education_levels
-                            ],
-                            value=f"QT_SALAS_NECESARIAS_EXTRA_{education_levels[0]}",
-                            multi=True,
-                            placeholder="Select variables to visualize",
-                        ),
-                        # Add an slider to change the hexagon size
-                        html.Hr(),
-                        html.H3("Tamanho do Hexágono"),
-                        dcc.Markdown("""
-                        O tamanho do hexágono determina o nível de detalhe na análise:  
-                        
-                        - Hexágonos maiores (~252,9 km²) oferecem uma visão ampla, ideal para tendências em nível de cidade;
-                        - Hexágonos médios (~36,13 km² a ~5,16 km²) são adequados para análises em nível de bairro;
-                        - Hexágonos menores (~0,74 km²) proporcionam detalhes precisos e localizados para identificar áreas críticas. 
-                        
-                        Escolha hexágonos maiores para tendências macro e menores para análises detalhadas e específicas.
-                        """),
-                        dcc.Slider(
-                            id="hexagon-size-slider",
-                            min=5,
-                            max=8,
-                            step=1,
-                            value=7,
-                            marks=slider_marks,
-                            tooltip={"placement": "bottom"},
-                        ),
-                        html.Hr(),
+        [
+            dbc.Col(
+                [
+                    html.H2("Configurações"),
+                    html.Hr(),
+                    html.H3("Selecione os níveis de ensino para analisar"),
+                    dcc.Markdown(("- Selecione os níveis de ensino que deseja visualizar no mapa.\n"
+                                  "- Os hexágonos no mapa mostrarão o número de **novas** salas necessárias para todos os níveis de ensino selecionados.\n"
+                                  "- O relatório será gerado com base nos níveis de ensino selecionados.")),
+                    dcc.Dropdown(
+                        id="education-level-dropdown",
+                        options=[
+                            {"label": education_levels_labels[level], "value": f"QT_SALAS_NECESARIAS_EXTRA_{level}"}
+                            for level in education_levels
+                        ],
+                        value=f"QT_SALAS_NECESARIAS_EXTRA_{education_levels[0]}",
+                        multi=True,
+                        placeholder="Select variables to visualize",
+                    ),
+                    # Add an slider to change the hexagon size
+                    html.Hr(),
+                    html.H3("Tamanho do Hexágono"),
+                    dcc.Markdown("""
+                    O tamanho do hexágono determina o nível de detalhe na análise:  
+                    
+                    - Hexágonos maiores (~252,9 km²) oferecem uma visão ampla, ideal para tendências em nível de cidade;
+                    - Hexágonos médios (~36,13 km² a ~5,16 km²) são adequados para análises em nível de bairro;
+                    - Hexágonos menores (~0,74 km²) proporcionam detalhes precisos e localizados para identificar áreas críticas. 
+                    
+                    Escolha hexágonos maiores para tendências macro e menores para análises detalhadas e específicas.
+                    """),
+                    dcc.Slider(
+                        id="hexagon-size-slider",
+                        min=5,
+                        max=8,
+                        step=1,
+                        value=7,
+                        marks=slider_marks,
+                        tooltip={"placement": "bottom"},
+                    ),
+                    html.Hr(),
 
-                        dcc.Store(id='map-data-store'),
+                    # dcc.Store(id='map-data-store'),
 
-                        html.H3("Mapa de Salas Necessárias"),
-                        dcc.Graph(id="map-graph"),
-                        html.Hr(),
+                    # html.H3("Mapa de Salas Necessárias"),
+                    # dcc.Loading(
+                    #     dcc.Graph(id="map-graph"),
+                    #     type="circle",
+                    # ),
+                    # html.Hr(),
+                    # html.H3("Configurações do Relatório"),
 
-                        html.H3("Configurações do Relatório"),
-                        dcc.Markdown("""
-                            Para identificar onde expandir ou construir novas escolas, ajuste o intervalo de análise para o **número de novas salas necessárias**. 
-                            Dessa maneira o relatório irá **filtrar as áreas no mapa** com base o número de novas salas selecionado.
-                        """),
-                        dbc.Row(
-                            [
-                                dbc.Col(
-                                    [
-                                        # Add a histogram and a range slider
-                                        dcc.Markdown((
-                                            "#### Ajuste o intervalo de análise:\n"
-                                            "- **Controle Deslizante:** Arraste as extremidades do controle deslizante abaixo do gráfico para definir o intervalo desejado de novas salas dos hexágonos a serem destacados.\n"
-                                            "- **Barras:** Mostram a quantidade de hexágonos que precisam de **novas** salas dentro do intervalo selecionado."
-                                        )),
-                                    ],
-                                    width=6,
-                                ),
-                                dbc.Col(
-                                    [
-                                        dcc.Markdown(("#### Mapa de Hexágonos Selecionados:\n"
-                                                      "- Este mapa mostra os hexágonos que têm um número de **novas** salas necessárias dentro do intervalo selecionado.\n"
-                                                      "- Os hexágonos são filtrados com base no intervalo selecionado ao lado.")),
-                                    ],
-                                    width=6,
-                                )
-                            ]
-                        ),
-                        dbc.Row([
+
+
+                    # dcc.Markdown((
+                    #     "Para identificar onde expandir ou construir novas escolas, ajuste o intervalo de análise para o **número de novas salas necessárias**.\n"
+                    #     "Dessa maneira o relatório irá **filtrar as áreas no mapa** com base o número de novas salas selecionado.\n"
+                    #     "#### Ajuste o intervalo de análise:\n"
+                    #     "- **Controle Deslizante:** Arraste as extremidades do controle deslizante abaixo do gráfico para definir o intervalo desejado de novas salas dos hexágonos a serem destacados.\n"
+                    #     "- **Barras:** Mostram a quantidade de hexágonos que precisam de **novas** salas dentro do intervalo selecionado."
+                    # )),
+
+
+                    # dcc.Graph(
+                    #     id="histogram-graph", 
+                    #     style={"width": "100%", "margin-bottom": "0px"},
+                    # ),
+                    # html.Div(
+                    #     dcc.RangeSlider(
+                    #         id="value-range-slider",
+                    #         min=0,  # Adjust based on your data
+                    #         max=100,  # Adjust based on your data
+                    #         step=1,
+                    #         value=[10, 25],  # Initial range
+                    #             # marks={
+                    #             #     i: {
+                    #             #         "label": str(i), 
+                    #             #         "style": {"font-size": "1.2em"},
+                    #             #     } for i in range(0, 101, 5)
+                    #             # },
+                    #             tooltip={"placement": "bottom"},
+                    #     ),
+                    #     style={"width": "100%", "margin-top": "0px", "margin-left": "10px", "margin-right": "0px"}
+                    # ),
+                    # html.Div(id="hexagons-in-selected-range"),
+                    # dcc.Markdown((
+                    #     "- Este mapa mostra os hexágonos que têm um número de **novas** salas necessárias dentro do intervalo selecionado.\n"
+                    #     "- Os hexágonos são filtrados com base no intervalo selecionado ao lado."
+                    # )),
+                    # dcc.Graph(id="filtered-map-graph"),
+
+                    dbc.Row(
+                        [
                             dbc.Col(
-                                html.Div([
-                                    dcc.Graph(id="histogram-graph", style={"width": "100%", "margin-bottom": "0px"}),
-                                    html.Div(dcc.RangeSlider(
-                                        id="value-range-slider",
-                                        min=0,  # Adjust based on your data
-                                        max=100,  # Adjust based on your data
-                                        step=1,
-                                        value=[10, 25],  # Initial range
-                                        # marks={
-                                        #     i: {
-                                        #         "label": str(i), 
-                                        #         "style": {"font-size": "1.2em"},
-                                        #     } for i in range(0, 101, 5)
-                                        # },
-                                        tooltip={"placement": "bottom"},
-                                    ),
-                                    style={"width": "100%", "margin-top": "0px", "margin-left": "10px", "margin-right": "0px"}
-                                    ),
-                                    dcc.Markdown(
-                                        "Número de Novas Salas Necessárias", 
-                                        # Center the text horizontally
-                                        style={"width": "100%", "display": "inline-block", "text-align": "center"})
-                                ], style={"width": "100%", "display": "inline-block"}
-                            ), width=6),
-                            dbc.Col(dcc.Graph(id="filtered-map-graph"), width=6),
-                        ]),
-
-                        html.Hr(),
-                        # Center the button
-                        html.Div(
-                            dbc.Button(
-                                "Gerar Relatório",
-                                id="create-report-button", 
-                                color="primary", 
-                                className="mr-1 mt-2 align-self-center justify-content-center"
+                                [
+                                    # Add a histogram and a range slider
+                                    dcc.Markdown((
+                                        "#### Ajuste o intervalo de análise:\n"
+                                        "- **Controle Deslizante:** Arraste as extremidades do controle deslizante abaixo do gráfico para definir o intervalo desejado de novas salas dos hexágonos a serem destacados.\n"
+                                        "- **Barras:** Mostram a quantidade de hexágonos que precisam de **novas** salas dentro do intervalo selecionado."
+                                    )),
+                                ],
+                                width=6,
                             ),
-                            className="d-flex justify-content-center"
+                            dbc.Col(
+                                [
+                                    dcc.Markdown(("#### Mapa de Hexágonos Selecionados:\n"
+                                                    "- Este mapa mostra os hexágonos que têm um número de **novas** salas necessárias dentro do intervalo selecionado.\n"
+                                                    "- Os hexágonos são filtrados com base no intervalo selecionado ao lado.")),
+                                ],
+                                width=6,
+                            )
+                        ]
+                    ),
+                    dbc.Row([
+                        dbc.Col(
+                            html.Div([
+                                dcc.Graph(id="histogram-graph", style={"width": "100%", "margin-bottom": "0px"}),
+                                html.Div(dcc.RangeSlider(
+                                    id="value-range-slider",
+                                    min=0,  # Adjust based on your data
+                                    max=100,  # Adjust based on your data
+                                    step=1,
+                                    value=[10, 25],  # Initial range
+                                    # marks={
+                                    #     i: {
+                                    #         "label": str(i), 
+                                    #         "style": {"font-size": "1.2em"},
+                                    #     } for i in range(0, 101, 5)
+                                    # },
+                                    tooltip={"placement": "bottom"},
+                                ),
+                                style={"width": "100%", "margin-top": "0px", "margin-left": "10px", "margin-right": "0px"}
+                                ),
+                                dcc.Markdown(
+                                    "Número de Novas Salas Necessárias", 
+                                    # Center the text horizontally
+                                    style={"width": "100%", "display": "inline-block", "text-align": "center"})
+                            ], style={"width": "100%", "display": "inline-block"}
+                        ), width=6),
+                        dbc.Col(dcc.Graph(id="filtered-map-graph"), width=6),
+                        html.Div(id="hexagons-in-selected-range"),
+                    ]),
+
+                    html.Hr(),
+                    # Center the button
+                    html.Div(
+                        dbc.Button(
+                            "Gerar Relatório",
+                            id="create-report-button", 
+                            color="primary", 
+                            className="mr-1 mt-2 align-self-center justify-content-center"
                         ),
-                        html.Br(),
-                    ], 
-                    width=12)
+                        className="d-flex justify-content-center"
+                    ),
+                    html.Br(),
+                ], 
+                width=12)
             ]
         ),
 ]
+
+# app_report = [
+#     dcc.Store(id='report-page-store'),
+#     dbc.Row(
+#         [
+#             dbc.Col(
+#                 [
+#                     html.Br(),
+#                     html.Div(id="report-container"),
+#                     html.Br(),
+#                     dcc.Loading(html.Div(id="report-body-container")),
+#                     html.Br(),
+#                     html.Div(id="report-footer-container", children=[
+#                         dbc.Pagination(id="report-pagination", max_value=1),
+#                         html.Br(),
+#                         dbc.Button("Imprimir Relatório", id="print-pdf-button", color="primary", className="mr-1 mt-2 align-self-center justify-content-center"),
+#                     ]),
+#                     html.Br(),
+#                 ],
+#                 width=12,
+#             ),
+#         ]
+#     )
+# ]
 
 app_report = [
     dbc.Row(
@@ -517,12 +714,18 @@ app_report = [
                     html.Br(),
                     html.Div(id="report-container"),
                     html.Br(),
+                    html.Div(id="dummy-body-container"),
                 ],
                 width=12,
             ),
         ]
     )
 ]
+
+
+
+
+
 
 tabs = dbc.Tabs(
     [
@@ -541,14 +744,21 @@ app.layout = dbc.Container([
 
 # Callbacks
 @app.callback(
-    Output("computed-table", "data"),
+    Output("computed-table", "data", allow_duplicate=True), 
+    Output("computed-table", "tooltip_data"),
     Input("municipality-dropdown", "value"),
+    prevent_initial_call='initial_duplicate'
 )
 def calculate_table(selected_municipality):
+    print("--------------------------------")
+    print("calculate_table callback called")
+    print("selected_municipality", selected_municipality)
+    print("--------------------------------")
 
     table_data = calculate_table_data(selected_municipality)
+    tooltips = calculate_tooltips(table_data)
     
-    return table_data.to_dict("records")
+    return table_data.to_dict("records"), tooltips
 
 @app.callback(
     Output('computed-table', 'data', allow_duplicate=True),
@@ -563,7 +773,23 @@ def update_columns(timestamp, rows):
      
     main_table = main_table[[education_levels_short_labels[level] for level in education_levels]].astype(float)
 
-    main_table.loc["Número Total de Vagas Necessárias"] = main_table.loc["Número Total de Alunos Matriculados"] * (1 + main_table.loc["Porcentagem de Alunos em Tempo Integral (%)"] / 100) * (1 - main_table.loc["Porcentagem de Alunos em Período Noturno (%)"] / 100)
+    # Calculate the number of students in public schools using:
+    # - Estimated population
+    # - Percentage of population not in the basic education system
+    # - Percentage of students in private schools
+    # Formula: Total students in public = Estimated population * (1 - % pop not in education - % students in private)
+    main_table.loc["Número Total de Alunos em Escolas Publicas"] = main_table.loc["População Estimada"] * \
+        (1 - main_table.loc["Porcentagem da População fora da Escola (%)"] / 100
+           - main_table.loc["Porcentagem de Alunos em Escolas Privadas (%)"] / 100)
+    
+    # Calculate the number of 'seats' needed in each level using:
+    # - Total number of students in public schools
+    # - Percentage of students in integral time
+    # - Percentage of students in nocturnal time
+    # Formula: Total number of seats = Total number of students * (1 + % students in integral time) * (1 - % students in nocturnal time)
+    main_table.loc["Número Total de Vagas Necessárias"] = main_table.loc["Número Total de Alunos em Escolas Publicas"] * \
+        (1 + main_table.loc["Porcentagem de Alunos em Tempo Integral (%)"] / 100) * \
+        (1 - main_table.loc["Porcentagem de Alunos em Período Noturno (%)"] / 100)
 
     # Calculate the number of classrooms needed based on the user defined number of chairs per classroom
 
@@ -587,100 +813,246 @@ def update_columns(timestamp, rows):
     prevent_initial_call=True,
 )
 def reset_table(n_clicks, selected_municipality):
-    if not selected_municipality:
-        return None
-
     return calculate_table_data(selected_municipality).to_dict("records")
 
+
+# Constraint hexagon res to be 5 if no municipality is selected
 @app.callback(
-        [Output("map-graph", "figure"), Output("map-data-store", "data")], 
-        Input("municipality-dropdown", "value"),
-        Input("map-variable-dropdown", "value"),
-        Input('hexagon-size-slider', 'value'),
-        Input('computed-table', 'data_timestamp'),
-        Input("value-range-slider", "value"),
-        State('computed-table', 'data'))
-def update_map(selected_municipality, selected_variables, hex_res, timestamp, value_range, rows):
-    # if not selected_municipality:
-    #     print("No municipality selected")
-    #     return px.choropleth_mapbox(
-    #         hex_gdf,
-    #         geojson=hex_gdf.geometry.__geo_interface__,
-    #         locations=hex_gdf.index,
-    #         color="QT_SALAS_UTILIZADAS",  # You can change this to any other column
-    #         color_continuous_scale="RdYlGn",
-    #         mapbox_style="carto-positron",
-    #         zoom=8,
-    #         center={
-    #             "lat": hex_gdf.geometry.centroid.y.mean(),
-    #             "lon": hex_gdf.geometry.centroid.x.mean(),
-    #         },
-    #     ), None
+    Output("hexagon-size-slider", "value"),
+    Input("municipality-dropdown", "value"),
+    State("hexagon-size-slider", "value")
+)
+def constraint_hexagon_res(selected_municipality, hex_res):
+    return MIN_HEX_SIZE_AT_STATE_LEVEL if not selected_municipality else hex_res
+
+# @app.callback(
+#     [
+#         Output("map-graph", "figure"), 
+#         Output("map-data-store", "data")
+#     ], 
+#     [
+#         Input("municipality-dropdown", "value"),
+#         Input("education-level-dropdown", "value"),
+#         Input('hexagon-size-slider', 'value'),
+#         Input('computed-table', 'data_timestamp'),
+#         Input("value-range-slider", "value"),
+#         State('computed-table', 'data')
+#     ]
+# )
+# def update_map(selected_municipality, selected_variables, hex_size, timestamp, value_range, rows):
+#     print("CALLBACK TRIGGERED")
+#     print("--------------------------------")
+#     print("selected_municipality", selected_municipality)
+#     print("hex_size", hex_size)
+#     print("--------------------------------")
+#     if not selected_municipality and hex_size > MIN_HEX_SIZE_AT_STATE_LEVEL:
+#         # If no municipality is selected and the hexagon resolution is less than 5, don't update the map
+#         # raise PreventUpdate
+#         hex_size = MIN_HEX_SIZE_AT_STATE_LEVEL
+        
+#     # Process the data 
+#     print("update_map > before calculate_extra_salas > rows", rows)
+#     print("update_map > before calculate_extra_salas > hex_gdf.shape", hex_gdf.shape)
     
-    # Process the data 
-    muni_hexagons = calculate_extra_salas(selected_municipality, selected_variables, rows, hex_res)
+#     muni_hexagons = calculate_extra_salas(selected_municipality, selected_variables, rows, hex_size)
+#     print("update_map > calculate_extra_salas done > muni_hexagons.shape", muni_hexagons.shape)
 
-    # Create the map figure
-    muni_hexagons["hover_name"] = "Novas Salas Necessárias" # Hover title
-    map_figure = px.choropleth_mapbox(
-        muni_hexagons,
-        geojson=muni_hexagons.geometry.__geo_interface__,
-        locations=muni_hexagons.index,
-        color="SalasNecessariasAcum",  # You can change this to any other column
-        color_continuous_scale="RdYlGn_r",
-        opacity=0.5,
-        hover_name="hover_name",
-        hover_data={f"QT_SALAS_NECESARIAS_EXTRA_{level}": True for level in education_levels} | {"SalasNecessariasAcum": False},
-        # hover_data={var : True for var in selected_variables},
-        mapbox_style="carto-positron",
-        labels={f"QT_SALAS_NECESARIAS_EXTRA_{level}": education_levels_labels[level] for level in education_levels} | {"SalasNecessariasAcum": "Novas Salas Necessárias"},
-        # labels={var: education_levels_labels[var] for var in selected_variables} | {"SalasNecessariasAcum": "Salas Necessárias Extra"},
-        zoom=8 if selected_municipality else 4,
-        center={
-            "lat": muni_hexagons.geometry.centroid.y.mean(),
-            "lon": muni_hexagons.geometry.centroid.x.mean(),
-        },
-    )
-    # Set makerlinewidth to 0 to remove the white border around the hexagons
-    map_figure.update_traces(marker=dict(line_width=0))
+#     # Create the map figure
+#     muni_hexagons["hover_name"] = "Novas Salas Necessárias" # Hover title
+#     map_figure = px.choropleth_map(
+#         muni_hexagons,
+#         geojson=muni_hexagons.geometry.__geo_interface__,
+#         locations=muni_hexagons.index,
+#         color="SalasNecessariasAcum",
+#         color_continuous_scale="RdYlGn_r",
+#         opacity=0.5,
+#         hover_name="hover_name",
+#         hover_data={f"QT_SALAS_NECESARIAS_EXTRA_{level}": True for level in education_levels} | {"SalasNecessariasAcum": False},
+#         mapbox_style="carto-positron",
+#         labels={f"QT_SALAS_NECESARIAS_EXTRA_{level}": education_levels_labels[level] for level in education_levels} | {"SalasNecessariasAcum": "Novas Salas Necessárias"},
+#         zoom=8 if selected_municipality else 4,
+#         center={
+#             "lat": muni_hexagons.geometry.centroid.y.mean(),
+#             "lon": muni_hexagons.geometry.centroid.x.mean(),
+#         },
+#     )
+#     # Set makerlinewidth to 0 to remove the white border around the hexagons
+#     map_figure.update_traces(marker=dict(line_width=0))
 
-    # Store the DataFrame as JSON in the hidden div    
-    return map_figure, muni_hexagons.drop(columns=["geometry"]).to_json(date_format='iso', orient='split')
+#     return map_figure, muni_hexagons.drop(columns=["geometry"]).to_json(date_format='iso', orient='split')
+
+# @app.callback(
+#     [
+#         Output("histogram-graph", "figure"), 
+#         Output("value-range-slider", "min"), 
+#         Output("value-range-slider", "max"),
+#         Output("value-range-slider", "marks"),
+#     ],
+#     [
+#         Input("map-data-store", "data"),
+#         Input("value-range-slider", "value"),
+#         State("municipality-dropdown", "value"),
+#         Input("hexagon-size-slider", "value"),
+#     ],
+#     prevent_initial_call=True
+# )
+# def update_histogram_and_slider(jsonified_data, value_range, selected_municipality, hex_size):
+#     if not selected_municipality and hex_size > MIN_HEX_SIZE_AT_STATE_LEVEL:
+#         # raise PreventUpdate
+#         hex_size = MIN_HEX_SIZE_AT_STATE_LEVEL
+    
+#     if jsonified_data is None:
+#         raise PreventUpdate
+    
+#     # Load the DataFrame from JSON
+#     df = pd.read_json(jsonified_data, orient='split')
+
+#     # Update the range slider min and max based on the DataFrame
+#     min_value = 0 # df["SalasNecessariasAcum"].min()
+#     max_value = df["SalasNecessariasAcum"].max()
+#     print("--------------------------------")
+#     print("SalasNecessariasAcum MAX VALUE ", max_value)
+#     print("--------------------------------")
+#     print("df SHAPE", df.shape)
+#     print("--------------------------------")
+#     print("df.info()", df.info())
+#     print("--------------------------------")
+#     print('df["SalasNecessariasAcum"].describe()', df["SalasNecessariasAcum"].describe())
+#     print("--------------------------------")
+
+
+#     marks_step = max_value // 10 if max_value > 10 else 1
+#     marks = {
+#         i: {
+#             "label": str(i), 
+#             "style": {"font-size": "1.2em"},
+#         } for i in range(0, max_value + 1, marks_step)
+#     }
+
+#     # Create the histogram figure
+#     print("DF shape", df.shape)
+#     print("DF", df)
+#     histogram_figure = px.histogram(    
+#         df,
+#         x="SalasNecessariasAcum",
+#         nbins=50,
+#         title=None,
+#         # labels={"SalasNecessariasAcum": "Novas Salas Necessárias", "count": "Número de Hexágonos"},
+#         labels={"count": "Número de Hexágonos"},
+#         # Set opacity to 50%
+#         opacity=0.5,
+#     )
+#     print("RANGE", value_range)
+#     print("DF shape", df[df["SalasNecessariasAcum"].between(value_range[0], value_range[1])].shape)
+#     highlighted_histogram_figure = px.histogram(    
+#         df[df["SalasNecessariasAcum"].between(value_range[0], value_range[1])],
+#         x="SalasNecessariasAcum",
+#         nbins=50,
+#         # title="Histograma de Salas Necessárias",
+#         # labels={"SalasNecessariasAcum": "Salas Necessárias Extra"},
+#         # Set opacity to 50%
+#         # opacity=0.5,
+#     )
+
+#     # Add a trace of a histogram to show the selected range
+#     histogram_figure.add_trace(
+#         highlighted_histogram_figure.data[0]
+#     )
+#     # The histogram should be on top of the original histogram not stacked
+#     histogram_figure.update_layout(
+#         barmode='overlay',
+#         margin=dict(l=0, r=15, b=0, t=0),
+#         xaxis=dict(range=[min_value, max_value])
+#     )
+
+#     # Turn of the axis titles
+#     histogram_figure.update_yaxes(title="Número de Hexágonos", showticklabels=True)                                         
+#     histogram_figure.update_xaxes(
+#         # title="Novas Salas Necessárias", 
+#         title=None,
+#         showticklabels=False,
+#         tickmode="array",
+#         tickvals=list(marks.keys()),
+#     )
+    
+#     return histogram_figure, min_value, max_value, marks
 
 @app.callback(
     [
+        Output("filtered-map-graph", "figure"),
         Output("histogram-graph", "figure"), 
         Output("value-range-slider", "min"), 
         Output("value-range-slider", "max"),
         Output("value-range-slider", "marks"),
+        Output("hexagons-in-selected-range", "children"),
     ],
     [
-        Input("map-data-store", "data"),
+        State("municipality-dropdown", "value"),
+        Input('computed-table', 'data'),
+        Input("education-level-dropdown", "value"),
+        Input("hexagon-size-slider", "value"),
         Input("value-range-slider", "value"),
     ],
+    # prevent_initial_call=True
 )
-def update_histogram_and_slider(jsonified_data, value_range):
-    if jsonified_data is None:
+def update_filtered_map(
+    selected_municipality,
+    computed_table_data,
+    selected_education_levels,
+    hex_size, 
+    value_range, 
+):
+    if not selected_municipality and hex_size > MIN_HEX_SIZE_AT_STATE_LEVEL:
+        # If no municipality is selected and the hexagon resolution is less than 5, don't update the map
         raise PreventUpdate
-    
-    # Load the DataFrame from JSON
-    df = pd.read_json(jsonified_data, orient='split')
+        # hex_size = MIN_HEX_SIZE_AT_STATE_LEVEL
 
-    # Update the range slider min and max based on the DataFrame
+    print("Process data ...", end="")
+        
+    # Process the data 
+    print("update_map > before calculate_extra_salas > computed_table_data", computed_table_data)
+    print("update_map > before calculate_extra_salas > hex_gdf.shape", hex_gdf.shape)
+    selected_hexagons = calculate_extra_salas(
+        selected_municipality, 
+        selected_education_levels, 
+        computed_table_data, 
+        hex_size
+    )
+    print("update_map > calculate_extra_salas done > selected_hexagons.shape", selected_hexagons.shape)
+    print("type(selected_hexagons)", type(selected_hexagons))
+
+    print("Done Process data")
+
+    ### HISTOGRAM #########################################################
+
+    print("Process histogram ...", end="")
+
+    # Update the range slider min and max based on the selected hexagons
     min_value = 0 # df["SalasNecessariasAcum"].min()
-    max_value = df["SalasNecessariasAcum"].max()
-    marks_step = max_value // 10
+    max_value = selected_hexagons["SalasNecessariasAcum"].max()
+    # print("--------------------------------")
+    # print("SalasNecessariasAcum MAX VALUE ", max_value)
+    # print("--------------------------------")
+    # print("selected_hexagons SHAPE", selected_hexagons.shape)
+    # print("--------------------------------")
+    # print("selected_hexagons.info()", selected_hexagons.info())
+    # print("--------------------------------")
+    # print('selected_hexagons["SalasNecessariasAcum"].describe()', selected_hexagons["SalasNecessariasAcum"].describe())
+    # print("--------------------------------")
+
+    marks_step = max_value // 10 if max_value > 10 else 1
     marks = {
         i: {
             "label": str(i), 
             "style": {"font-size": "1.2em"},
-        } for i in range(0, max_value + 1, marks_step)
+        } for i in range(0, int(max_value) + 1, int(marks_step))
     }
 
     # Create the histogram figure
-    print("DF shape", df.shape)
+    print("selected_hexagons SHAPE", selected_hexagons.shape)
+    print("selected_hexagons", selected_hexagons)
     histogram_figure = px.histogram(    
-        df,
+        selected_hexagons,
         x="SalasNecessariasAcum",
         nbins=50,
         title=None,
@@ -689,16 +1061,10 @@ def update_histogram_and_slider(jsonified_data, value_range):
         # Set opacity to 50%
         opacity=0.5,
     )
-    print("RANGE", value_range)
-    print("DF shape", df[df["SalasNecessariasAcum"].between(value_range[0], value_range[1])].shape)
     highlighted_histogram_figure = px.histogram(    
-        df[df["SalasNecessariasAcum"].between(value_range[0], value_range[1])],
+        selected_hexagons[selected_hexagons["SalasNecessariasAcum"].between(*value_range)],
         x="SalasNecessariasAcum",
         nbins=50,
-        # title="Histograma de Salas Necessárias",
-        # labels={"SalasNecessariasAcum": "Salas Necessárias Extra"},
-        # Set opacity to 50%
-        # opacity=0.5,
     )
 
     # Add a trace of a histogram to show the selected range
@@ -721,58 +1087,41 @@ def update_histogram_and_slider(jsonified_data, value_range):
         tickmode="array",
         tickvals=list(marks.keys()),
     )
-    
-    
-    return histogram_figure, min_value, max_value, marks
 
+    print("Done Process histogram")
 
-@app.callback(
-    Output("filtered-map-graph", "figure"),
-    Input("histogram-graph", "figure"),
-    [State("hexagon-size-slider", "value"),
-     State("map-data-store", "data"),
-     State("value-range-slider", "value"),
-    State("municipality-dropdown", "value")]
-)
-def update_filtered_map(hist_map, hex_size, jsonified_data, value_range, selected_municipality):
-    # Load the DataFrame from JSON
-    muni_hexagons = pd.read_json(jsonified_data, orient='split')
+    ### MAP #################################################################
 
-    # Use h3 library to get the hexagon polygons and create a GeoDataFrame
-    print("Creating a GeoDataFrame with the hexagon polygons ... ", end="")
-    print("HEX SIZE", hex_size)
-    print("HEX COLUMN", muni_hexagons.columns[0])
-    muni_hexagons["geometry"] = muni_hexagons[f"hex_{hex_size}"].map(lambda x: Polygon(h3.h3_to_geo_boundary(x, geo_json=True)))
-    print("Done")
-    print("Creating a GeoDataFrame with the hexagon polygons ... ", end="")
-    muni_hexagons = gpd.GeoDataFrame(muni_hexagons, geometry="geometry")
-    print("Done")
+    print("Process map ...", end="")
 
     # Filter the DataFrame based on the range slider values
-    print(f"Filtering the DataFrame based on the range slider values: {value_range}")
-    filtered_df = muni_hexagons[(muni_hexagons["SalasNecessariasAcum"] >= value_range[0]) & (muni_hexagons["SalasNecessariasAcum"] <= value_range[1])]
+    if value_range is not None:
+        print(f"Filtering the DataFrame based on the range slider values: {value_range}")
+        selected_hexagons_filtered = selected_hexagons[selected_hexagons["SalasNecessariasAcum"].between(*value_range)]
+    else:
+        selected_hexagons_filtered = selected_hexagons
 
-    # MAP WITH SELECTED HEXAGONS
     # Create the map figure
-    filtered_df["hover_name"] = "Novas Salas Necessárias" # Hover title
-    filtered_map_figure = px.choropleth_mapbox(
-        filtered_df,
-        geojson=filtered_df.geometry.__geo_interface__,
-        locations=filtered_df.index,
-        color="SalasNecessariasAcum",  # You can change this to any other column
+    print("##### hex_size:", hex_size)
+    print("##### selected_hexagons.columns:", selected_hexagons.columns)
+    selected_hexagons_filtered["hover_name"] = "Novas Salas Necessárias" # Hover title
+    filtered_map_figure = px.choropleth_map(
+        selected_hexagons_filtered,
+        geojson=selected_hexagons_filtered.geometry.__geo_interface__,
+        locations=selected_hexagons_filtered.index,
+        color="SalasNecessariasAcum",
         color_continuous_scale="RdYlGn_r",
+        range_color=[0, max_value],
         opacity=0.5,
         hover_name="hover_name",
-        hover_data={f"QT_SALAS_NECESARIAS_EXTRA_{level}": True for level in education_levels} | {"SalasNecessariasAcum": False},
-        # hover_data={var : True for var in selected_variables},
-        mapbox_style="carto-positron",
+        hover_data={f"QT_SALAS_NECESARIAS_EXTRA_{level}": True for level in education_levels} | {"SalasNecessariasAcum": False, f"hex_{hex_size}": False},
+        map_style="carto-positron",
         labels={f"QT_SALAS_NECESARIAS_EXTRA_{level}": education_levels_labels[level] for level in education_levels} | {"SalasNecessariasAcum": "Novas Salas Necessárias"},
-        # labels={var: education_levels_labels[var] for var in selected_variables} | {"SalasNecessariasAcum": "Salas Necessárias Extra"},
-        zoom= 8 if selected_municipality else 4,
+        zoom=10 if selected_municipality else 6,
         center={
-            "lat": filtered_df.geometry.centroid.y.mean(),
-            "lon": filtered_df.geometry.centroid.x.mean(),
-        },
+            "lat": selected_hexagons.geometry.centroid.y.mean(),
+            "lon": selected_hexagons.geometry.centroid.x.mean(),
+        }
     )
     # Set makerlinewidth to 0 to remove the white border around the hexagons
     filtered_map_figure.update_traces(marker=dict(line_width=0))
@@ -780,10 +1129,14 @@ def update_filtered_map(hist_map, hex_size, jsonified_data, value_range, selecte
     # Remove margins
     filtered_map_figure.update_layout(margin=dict(l=0, r=0, t=0, b=0))
 
-    return filtered_map_figure
+    print("Done Process map")
+
+    # Show number of hexagons in the selected range
+    hexagons_in_selected_range = dcc.Markdown(f"#### {len(selected_hexagons_filtered)} Hexágonos selecionados precisam de entre {value_range[0]} e {value_range[1]} novas salas")
+
+    return filtered_map_figure, histogram_figure, int(min_value), int(max_value), marks, hexagons_in_selected_range
 
 # callback for showing a spinner within dbc.Button()
-
 app.clientside_callback(
     """
     function (click) {
@@ -795,47 +1148,74 @@ app.clientside_callback(
     prevent_initial_call=True
 )
 
-
 @app.callback(
-    [Output("create-report-button", "children", allow_duplicate=True),
-     Output("report-container", "children"),
-     Output("tabs", "active_tab")],
-    Input("create-report-button", "n_clicks"),
-    [State("hexagon-size-slider", "value"),
-     State("map-variable-dropdown", "value"),
-     State('computed-table', 'data'),
-     State("map-data-store", "data"),
-     State("value-range-slider", "value"),
-     State("map-graph", "figure"),
-     State("municipality-dropdown", "value"),
-     State("state-dropdown", "value")
-     ],
+    [
+        Output("create-report-button", "children", allow_duplicate=True),
+        Output("report-container", "children"),
+        Output("tabs", "active_tab"),
+    ],
+    [
+        Input("create-report-button", "n_clicks"),
+        State("hexagon-size-slider", "value"),
+        State("education-level-dropdown", "value"),
+        State('computed-table', 'data'),
+        State('computed-table', 'tooltip_data'),
+        # State("map-data-store", "data"), 
+        State("filtered-map-graph", "figure"),
+        State("value-range-slider", "value"),
+        # State("map-graph", "figure"),
+        State("municipality-dropdown", "value"),
+        State("state-dropdown", "value")
+    ],
     prevent_initial_call=True
 )
-def create_report(n_clicks, hex_size, selected_education_levels, computed_table_data, jsonified_data, value_range, map_figure, selected_municipality, selected_state):
-        
+def create_report(
+        n_clicks, 
+        hex_size, 
+        selected_education_levels, 
+        computed_table_data, 
+        table_tooltips, 
+        figure_data, 
+        value_range, 
+        # map_figure, 
+        selected_municipality, 
+        selected_state
+    ):
     if n_clicks is None:
         raise PreventUpdate
+
+    if selected_municipality is None and hex_size > MIN_HEX_SIZE_AT_STATE_LEVEL:
+        raise PreventUpdate
+
+    if figure_data is None:
+        raise PreventUpdate    
     
     if isinstance(selected_education_levels, str):
         selected_education_levels = [selected_education_levels]
 
-    # Load the DataFrame from JSON
-    muni_hexagons = pd.read_json(jsonified_data, orient='split')
+    # Load the DataFrame from the figure data
+    cleaned_features = [{
+        "type": "Feature",
+        "geometry": feature['geometry'],
+        "properties": {}
+    } for feature in figure_data['data'][0]['geojson']['features']]
+    filtered_df = gpd.GeoDataFrame.from_features(cleaned_features)
 
-    # Use h3 library to get the hexagon polygons and create a GeoDataFrame
-    print("Creating a GeoDataFrame with the hexagon polygons ... ", end="")
-    print("HEX SIZE", hex_size)
-    print("HEX COLUMN", muni_hexagons.columns[0])
-    muni_hexagons["geometry"] = muni_hexagons[f"hex_{hex_size}"].map(lambda x: Polygon(h3.h3_to_geo_boundary(x, geo_json=True)))
-    print("Done")
-    print("Creating a GeoDataFrame with the hexagon polygons ... ", end="")
-    muni_hexagons = gpd.GeoDataFrame(muni_hexagons, geometry="geometry")
-    print("Done")
+    # # Parse the index
+    # raw_index = figure_data['data'][0]['locations']
+    # if isinstance(raw_index, list):
+    #     index = pd.Index(raw_index)
+    # elif isinstance(raw_index, dict):
+    #     index = pd.Index(raw_index['_inputArray'].values())
+    # else:
+    #     print("ERROR: raw_index type not recognized")
+    #     index = pd.Index(range(len(filtered_df)))
+    # print("filtered_df", filtered_df)
+    # print("index", index)
+    # filtered_df.index = index
 
-    # Filter the DataFrame based on the range slider values
-    print(f"Filtering the DataFrame based on the range slider values: {value_range}")
-    filtered_df = muni_hexagons[(muni_hexagons["SalasNecessariasAcum"] >= value_range[0]) & (muni_hexagons["SalasNecessariasAcum"] <= value_range[1])]
+    columns = [*[f"QT_SALAS_NECESARIAS_EXTRA_{level}"  for level in education_levels], "SalasNecessariasAcum", f"hex_{hex_size}"]
+    filtered_df[columns] = figure_data['data'][0]['customdata']
 
     # INPUT TABLE
     input_table = dash_table.DataTable(
@@ -851,7 +1231,7 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
                 "id": i
             } for i in initial_table_data.columns
         ],
-        tooltip_data=tooltips,
+        tooltip_data=table_tooltips,
         data=computed_table_data,
         editable=False, # Disable editing in the report
         style_data={
@@ -876,31 +1256,6 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
         ],
     )
 
-    # MAP WITH SELECTED HEXAGONS
-    # Create the map figure
-    filtered_df["hover_name"] = "Novas Salas Necessárias" # Hover title
-    map_figure = px.choropleth_mapbox(
-        filtered_df,
-        geojson=filtered_df.geometry.__geo_interface__,
-        locations=filtered_df.index,
-        color="SalasNecessariasAcum",  # You can change this to any other column
-        color_continuous_scale="RdYlGn_r",
-        opacity=0.5,
-        hover_name="hover_name",
-        hover_data={f"QT_SALAS_NECESARIAS_EXTRA_{level}": True for level in education_levels} | {"SalasNecessariasAcum": False},
-        # hover_data={var : True for var in selected_variables},
-        mapbox_style="carto-positron",
-        labels={f"QT_SALAS_NECESARIAS_EXTRA_{level}": education_levels_labels[level] for level in education_levels} | {"SalasNecessariasAcum": "Novas Salas Necessárias"},
-        # labels={var: education_levels_labels[var] for var in selected_variables} | {"SalasNecessariasAcum": "Salas Necessárias Extra"},
-        zoom=8,
-        center={
-            "lat": filtered_df.geometry.centroid.y.mean(),
-            "lon": filtered_df.geometry.centroid.x.mean(),
-        },
-    )
-    # Set makerlinewidth to 0 to remove the white border around the hexagons
-    map_figure.update_traces(marker=dict(line_width=0))
-
     # Create a data table with the selected hexagons
     def generate_hexagon_table(df):
 
@@ -919,7 +1274,7 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
         hexagon_latlon_coords = df[f"hex_{hex_size}"].apply(lambda x: h3.h3_to_geo(x))
         # Use requests library to query the Nominatim API to get the address based on the lat, lon coordinates
         import requests
-        import time
+        
         def nominatim_reverse_geocode(coordinate):
             url = "https://nominatim.openstreetmap.org/reverse"
             params = {
@@ -1037,9 +1392,9 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
                 "border": "1px solid black"
             },
         )
-
-    # Create a map with the selected hexagons
-    def generate_hexagon_maps(df):
+    
+    # Create a maps with the selected hexagons
+    def generate_hexagon_maps(df, hex_size, selected_education_levels):     
         # Iterate over the selected hexagons
         hexagon_detail_list = []
 
@@ -1073,23 +1428,54 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
                     x, y = linestring.xy
                     lats = np.append(lats, y)
                     lons = np.append(lons, x)
-                    lats = np.append(lats, None)
-                    lons = np.append(lons, None)
+                    # lats = np.append(lats, None)
+                    # lons = np.append(lons, None)
 
-            hexagon_map = px.line_mapbox(
-                lat=lats,
-                lon=lons,
-                # color=["red"] * len(lats),
-                color_discrete_sequence=["red"],
-                mapbox_style='open-street-map',
+            print("positions", list(zip(lats, lons)))
+
+            # hexagon_map = px.line_map(
+            #     lat=lats,
+            #     lon=lons,
+            #     # color=["red"] * len(lats),
+            #     color_discrete_sequence=["red"],
+            #     # mapbox_style='open-street-map',
+            #     zoom=zoom,
+            #     center={
+            #         "lat": row.geometry.centroid.y,
+            #         "lon": row.geometry.centroid.x,
+            #     },
+            # )
+            # # Remove the legend
+            # hexagon_map.update_layout(showlegend=False)
+
+            # hexagon_map = dl.Map([
+            #     dl.TileLayer(),
+            #     dl.Polyline(positions=[list(zip(lats, lons))])
+            # ], center=[row.geometry.centroid.x, row.geometry.centroid.y], zoom=zoom, 
+            #     # style={'height': '50vh'}
+            # )
+
+            center = h3.h3_to_geo(row[f"hex_{hex_size}"])
+            print("CENTER", center)
+
+            # eventHandlers = dict(
+            #     click=assign("function(e, ctx){console.log(`You clicked at ${e.latlng}.`)}"),
+            # )
+
+            hexagon_map = dl.Map([
+                dl.TileLayer(
+                    url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+                    subdomains='abcd',
+                    maxZoom=20,
+                    minZoom=0,
+                ),
+                dl.Polyline(positions=list(zip(lats, lons)), color="red"),
+                dl.ScaleControl(position="bottomleft")
+            ], 
+                center=center,
                 zoom=zoom,
-                center={
-                    "lat": row.geometry.centroid.y,
-                    "lon": row.geometry.centroid.x,
-                },
+                 style={"height": "500px", "width": "100%"}
             )
-            # Remove the legend
-            hexagon_map.update_layout(showlegend=False)
 
             # Create a data table with the hexagon details
             # print("ROW INFO", row)
@@ -1148,7 +1534,11 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
                         [
                             dbc.Row(
                                 [
-                                    dbc.Col(dcc.Graph(figure=hexagon_map)),
+                                    # dbc.Col(dcc.Graph(figure=hexagon_map)),
+                                    dbc.Col(html.Div([
+                                        hexagon_map,
+                                        dcc.Interval(id="resize-trigger", interval=500, n_intervals=0)  # Runs once on page load
+                                        ])),
                                     dbc.Col([
                                         dbc.Row([location_info]),
                                         dbc.Row([
@@ -1156,8 +1546,6 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
                                             table
                                         ]),
                                     ]),
-                                    # dbc.Col([row_info_table_as_markdown]),
-                                    # dbc.Col(html.Div(row_info_dashtable)),
                                 ]
                             ),
                         ]
@@ -1169,18 +1557,14 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
             hexagon_detail_list.append(hexagon_details_card)
 
         return html.Div(hexagon_detail_list)
-
+    
     # Generate report components
-
-    print("filtered_df.columns", filtered_df.columns)
-
     if selected_municipality is None:
         regiao_selectionada_text = selected_state.upper()
     else:
         regiao_selectionada_text = f"{selected_municipality.capitalize()}, {selected_state.upper()}"
 
     report_components = [
-        
         html.H3("Relatório de Demanda de Salas"),
 
         print("selected_education_levels", selected_education_levels),
@@ -1202,13 +1586,16 @@ def create_report(n_clicks, hex_size, selected_education_levels, computed_table_
         input_table,
         html.Hr(),
         html.H4("Visão Geral do Hexágono"),
-        dcc.Graph(figure=map_figure),
+        dcc.Graph(figure=figure_data, className="mb-10"),
+        html.Br(),
+        html.Br(),
+        html.Br(),
         html.H4("Detalhes do Hexágono"),
         html.H5("Salas Necessárias por Nível"),
         generate_hexagon_table(filtered_df),
         html.Br(),
         html.H4("Salas Necessárias por Hexágono"),
-        generate_hexagon_maps(filtered_df),
+        generate_hexagon_maps(filtered_df, hex_size, selected_education_levels),
         html.Br(),
         dbc.Button("Imprimir Relatório", id="print-pdf-button", color="primary", className="mr-1 mt-2 align-self-center justify-content-center"),
     ]
@@ -1228,6 +1615,14 @@ app.clientside_callback(
     Input('print-pdf-button', 'n_clicks'),
     prevent_initial_call=True
 )
+
+# Clientside callback to trigger the resize event
+app.clientside_callback(
+    """function(n) { if(n > 0) { setTimeout(() => window.dispatchEvent(new Event('resize')), 300); } return n; }""",
+    dash.Output("resize-trigger", "n_intervals"),
+    dash.Input("resize-trigger", "n_intervals")
+)
+
 
 if __name__ == "__main__":
     app.run(debug=True)
