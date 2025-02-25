@@ -40,12 +40,13 @@ required_columns = [
     # "geometry"
 ]
 
-def get_h3_geometry(hex_ids, crs="EPSG:4326"):
-    return gpd.GeoSeries(hex_ids.map(lambda x: Polygon(h3.h3_to_geo_boundary(x, geo_json=True))), crs=crs)
+def get_h3_geometry(hex_ids):
+    for hex_id in hex_ids:
+        yield Polygon(h3.h3_to_geo_boundary(hex_id, geo_json=True))
 
 start_time = time.time()
 hex_gdf = pd.read_parquet("data/25022025_dashboard_hexs_light.parquet", columns=required_columns)
-print("Time to load and preprocess the data:", time.time() - start_time)
+print("Time to load the data:", time.time() - start_time)
 
 # Replace "pop_3_months_3_years" with  "pop_INF_CRE"
 hex_gdf = hex_gdf.rename(columns={
@@ -1101,7 +1102,10 @@ def update_filtered_map(
     else:
         selected_hexagons_filtered = selected_hexagons
 
-    h3hex_geom = get_h3_geometry(selected_hexagons_filtered[f"hex_{hex_size}"])
+    # Create the H3 geometry
+    start_time = time.time()
+    h3_geom = gpd.GeoSeries(get_h3_geometry(selected_hexagons_filtered[f"hex_{hex_size}"]), crs="EPSG:4326")
+    print("Time to create H3 geometry:", time.time() - start_time)
 
     # Create the map figure
     print("##### hex_size:", hex_size)
@@ -1109,7 +1113,7 @@ def update_filtered_map(
     selected_hexagons_filtered["hover_name"] = "Novas Salas Necessárias" # Hover title
     filtered_map_figure = px.choropleth_map(
         selected_hexagons_filtered,
-        geojson=h3hex_geom.__geo_interface__,
+        geojson=h3_geom.__geo_interface__,
         locations=selected_hexagons_filtered.index,
         color="SalasNecessariasAcum",
         color_continuous_scale="RdYlGn_r",
@@ -1121,8 +1125,8 @@ def update_filtered_map(
         labels={f"QT_SALAS_NECESARIAS_EXTRA_{level}": education_levels_labels[level] for level in education_levels} | {"SalasNecessariasAcum": "Novas Salas Necessárias"},
         zoom=10 if selected_municipality else 6,
         center={
-            "lat": h3hex_geom.centroid.y.mean(),
-            "lon": h3hex_geom.centroid.x.mean(),
+            "lat": h3_geom.centroid.y.mean(),
+            "lon": h3_geom.centroid.x.mean(),
         }
     )
     # Set makerlinewidth to 0 to remove the white border around the hexagons
