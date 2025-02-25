@@ -19,12 +19,15 @@ dash==2.18.1
     # via
     #   app-classrooms-deficit-estimation (pyproject.toml)
     #   dash-bootstrap-components
+    #   dash-leaflet
 dash-bootstrap-components==1.6.0
     # via app-classrooms-deficit-estimation (pyproject.toml)
 dash-core-components==2.0.0
     # via dash
 dash-html-components==2.0.0
     # via dash
+dash-leaflet==1.0.15
+    # via app-classrooms-deficit-estimation (pyproject.toml)
 dash-table==5.0.0
     # via dash
 descartes==1.1.0
