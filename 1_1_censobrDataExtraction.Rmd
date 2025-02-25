@@ -1,0 +1,103 @@
+---
+title: "Para Data Extraction Notebook"
+output: html_notebook
+---
+
+```{r}
+# Load necessary libraries
+library(censobr)
+library(arrow)
+library(dplyr)
+library(ggplot2)
+```
+
+## Download the dictionary for population dataset
+```{r}
+data_dictionary(year = 2010, dataset = "tracts", showProgress = FALSE)
+```
+
+## Download the dictionary for population dataset
+```{r}
+read_population(year = 2010, showProgress = TRUE)
+```
+
+
+```{r}
+data_dictionary(year = 2010, dataset = "population", showProgress = TRUE)
+```
+
+
+## Download Census Tract data
+
+
+```{r}
+censobr::censobr_cache(list_files = TRUE)
+```
+
+```{r}
+censobr::censobr_cache(delete_file = "all")
+```
+
+```{r}
+tract_basico <- read_tracts(
+  year = 2010,
+  dataset = "Basico",
+  showProgress = TRUE,
+  cache = TRUE
+)
+```
+
+```{r}
+tract_income <- read_tracts(
+  year = 2010,
+  dataset = "DomicilioRenda",
+  showProgress = TRUE,
+  cache = TRUE
+)
+```
+
+```{r}
+tract_pessoa <- read_tracts(
+  year = 2010,
+  dataset = "Pessoa",
+  showProgress = TRUE,
+  cache = TRUE
+)
+```
+
+```{r}
+# Select columns
+tract_basico <- tract_basico |> select("code_tract", "V002") # Population
+tract_income <- tract_income |> select("code_tract", "V003") # Income (Reais)
+tract_idade <- tract_pessoa |>
+  select(
+    "code_tract", "pessoa13_V021", "pessoa13_V022", "pessoa13_V023",
+    "pessoa13_V024", "pessoa13_V025", "pessoa13_V026", "pessoa13_V027",
+    "pessoa13_V028", "pessoa13_V029", "pessoa13_V030", "pessoa13_V031",
+    "pessoa13_V032", "pessoa13_V033", "pessoa13_V034", "pessoa13_V035",
+    "pessoa13_V036", "pessoa13_V037", "pessoa13_V038", "pessoa13_V039",
+    "pessoa13_V040", "pessoa13_V041", "pessoa13_V042", "pessoa13_V043",
+    "pessoa13_V044", "pessoa13_V045", "pessoa13_V046", "pessoa13_V047",
+    "pessoa13_V048", "pessoa13_V049", "pessoa13_V050", "pessoa13_V051",
+    "pessoa13_V052"
+  ) # Population by age
+```
+
+
+
+```{r}
+# Merge all variables in one single data frame
+tracts_df_temp <- left_join(tract_basico, tract_income)
+tracts_df <- left_join(tracts_df_temp, tract_idade) |> collect()
+```
+
+
+```{r}
+# Calculate income per capita (Reais)
+tracts_df <- tracts_df |> mutate(income_pc = V003 / V002)
+head(tracts_df)
+```
+
+```{r}
+write.csv(tracts_df, "censobr_tract_income_para.csv", row.names = TRUE)
+```
