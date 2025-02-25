@@ -401,7 +401,7 @@ app_header = dbc.Row(
                         
                         **Divirta-se explorando o painel e planeje de forma eficiente a expansão da infraestrutura educacional!**
 
-                        **Revise o método de cálculo no [link]([TODO: Add link to PDF on github])**
+                        **Revise o método de cálculo no [link](https://github.com/EL-BID/edu-brazil/raw/562b5a469d582337e5671588fc05a0f5bbaf2f83/app_classrooms_deficit_estimation/docs/methodology.pdf)**
                     '''),
                     id="alert-fade",
                     dismissable=True,
