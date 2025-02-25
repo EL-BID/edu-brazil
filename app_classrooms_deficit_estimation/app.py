@@ -40,9 +40,25 @@ required_columns = [
     # "geometry"
 ]
 
+def process_batch(batch_df):
+    batch_df["geometry"] = batch_df["hex"].map(lambda x: Polygon(h3.h3_to_geo_boundary(x, geo_json=True)))
+    return batch_df
+
+start_time = time.time()
+
 hex_df = pd.read_parquet("data/25022025_dashboard_hexs_light.parquet", columns=required_columns)
-h3_geom = hex_df["hex"].apply(lambda x: Polygon(h3.h3_to_geo_boundary(x, geo_json=True)))
-hex_gdf = gpd.GeoDataFrame(hex_df, geometry=h3_geom, crs="EPSG:4326")
+
+# Define batch size
+batch_size = 50000  # Adjust based on available memory
+batches = [hex_df.iloc[i:i + batch_size] for i in range(0, len(hex_df), batch_size)]
+
+# Process each batch and combine them
+hex_gdf = pd.concat([process_batch(batch) for batch in batches], ignore_index=True)
+
+# Convert to GeoDataFrame
+hex_gdf = gpd.GeoDataFrame(hex_gdf, geometry=hex_gdf["geometry"], crs="EPSG:4326")
+
+print("Time to load and preprocess the data:", time.time() - start_time)
 
 # Replace "pop_3_months_3_years" with  "pop_INF_CRE"
 hex_gdf = hex_gdf.rename(columns={
