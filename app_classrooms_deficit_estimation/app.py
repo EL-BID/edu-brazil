@@ -14,7 +14,7 @@ import h3
 from shapely.geometry import Polygon
 import dash_leaflet as dl
 
-INITIAL_MUNICIPALITY = None
+INITIAL_MUNICIPALITY = 'Belém'
 MIN_HEX_SIZE_AT_STATE_LEVEL = 6
 
 # Load and preprocess the data
