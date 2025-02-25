@@ -40,24 +40,11 @@ required_columns = [
     # "geometry"
 ]
 
-def process_batch(batch_df):
-    batch_df["geometry"] = batch_df["hex"].map(lambda x: Polygon(h3.h3_to_geo_boundary(x, geo_json=True)))
-    return batch_df
+def get_h3_geometry(hex_ids, crs="EPSG:4326"):
+    return gpd.GeoSeries(hex_ids.map(lambda x: Polygon(h3.h3_to_geo_boundary(x, geo_json=True))), crs=crs)
 
 start_time = time.time()
-
-hex_df = pd.read_parquet("data/25022025_dashboard_hexs_light.parquet", columns=required_columns)
-
-# Define batch size
-batch_size = 50000  # Adjust based on available memory
-batches = [hex_df.iloc[i:i + batch_size] for i in range(0, len(hex_df), batch_size)]
-
-# Process each batch and combine them
-hex_gdf = pd.concat([process_batch(batch) for batch in batches], ignore_index=True)
-
-# Convert to GeoDataFrame
-hex_gdf = gpd.GeoDataFrame(hex_gdf, geometry=hex_gdf["geometry"], crs="EPSG:4326")
-
+hex_gdf = pd.read_parquet("data/25022025_dashboard_hexs_light.parquet", columns=required_columns)
 print("Time to load and preprocess the data:", time.time() - start_time)
 
 # Replace "pop_3_months_3_years" with  "pop_INF_CRE"
@@ -354,12 +341,10 @@ def calculate_extra_salas(name_muni, selected_variables, rows, hex_res):
             lambda x: h3.h3_to_parent(x, hex_res)
         )
         dfc = muni_hexagons.groupby([coarse_hex_col]).agg(agg).reset_index()
-        gdfc_geometry = dfc[coarse_hex_col].apply(lambda x: Polygon(h3.h3_to_geo_boundary(x, geo_json=True)))
         
-        muni_hexagons_coarse = gpd.GeoDataFrame(dfc, geometry=gdfc_geometry, crs="EPSG:4326")
         print("Done")
 
-        return muni_hexagons_coarse
+        return dfc
 
     
     print("COLUMNS IN HEXAGON DATAFRAME", muni_hexagons.columns)
@@ -1116,13 +1101,15 @@ def update_filtered_map(
     else:
         selected_hexagons_filtered = selected_hexagons
 
+    h3hex_geom = get_h3_geometry(selected_hexagons_filtered[f"hex_{hex_size}"])
+
     # Create the map figure
     print("##### hex_size:", hex_size)
     print("##### selected_hexagons.columns:", selected_hexagons.columns)
     selected_hexagons_filtered["hover_name"] = "Novas Salas Necessárias" # Hover title
     filtered_map_figure = px.choropleth_map(
         selected_hexagons_filtered,
-        geojson=selected_hexagons_filtered.geometry.__geo_interface__,
+        geojson=h3hex_geom.__geo_interface__,
         locations=selected_hexagons_filtered.index,
         color="SalasNecessariasAcum",
         color_continuous_scale="RdYlGn_r",
@@ -1134,8 +1121,8 @@ def update_filtered_map(
         labels={f"QT_SALAS_NECESARIAS_EXTRA_{level}": education_levels_labels[level] for level in education_levels} | {"SalasNecessariasAcum": "Novas Salas Necessárias"},
         zoom=10 if selected_municipality else 6,
         center={
-            "lat": selected_hexagons.geometry.centroid.y.mean(),
-            "lon": selected_hexagons.geometry.centroid.x.mean(),
+            "lat": h3hex_geom.centroid.y.mean(),
+            "lon": h3hex_geom.centroid.x.mean(),
         }
     )
     # Set makerlinewidth to 0 to remove the white border around the hexagons
