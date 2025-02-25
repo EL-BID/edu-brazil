@@ -9,7 +9,6 @@ import plotly.express as px
 import pandas as pd
 import numpy as np
 import geopandas as gpd
-import urbanpy as up
 import h3
 from shapely.geometry import Polygon
 import dash_leaflet as dl
@@ -1099,12 +1098,17 @@ def update_filtered_map(
     if value_range is not None:
         print(f"Filtering the DataFrame based on the range slider values: {value_range}")
         selected_hexagons_filtered = selected_hexagons[selected_hexagons["SalasNecessariasAcum"].between(*value_range)]
+        print("selected_hexagons_filtered SHAPE", selected_hexagons_filtered.shape)
     else:
         selected_hexagons_filtered = selected_hexagons
 
     # Create the H3 geometry
     start_time = time.time()
-    h3_geom = gpd.GeoSeries(get_h3_geometry(selected_hexagons_filtered[f"hex_{hex_size}"]), crs="EPSG:4326")
+    h3_geom = gpd.GeoSeries(
+        data=get_h3_geometry(selected_hexagons_filtered[f"hex_{hex_size}"]), 
+        index=selected_hexagons_filtered.index,
+        crs="EPSG:4326"
+    )
     print("Time to create H3 geometry:", time.time() - start_time)
 
     # Create the map figure
